@@ -1,30 +1,27 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub Issues
 
-Issues, specs, y mapas de wayfinder para el proyecto **Embodied AI** viven como archivos markdown dentro de esta carpeta del proyecto.
+Issues, specs, y mapas de wayfinder para el proyecto **Embodied AI** viven como issues de GitHub en `mauriciosoyastor/embodied-ai`.
 
 ## Convenciones
 
-- Un feature por directorio: `.scratch/<feature-slug>/`
-- El spec es `.scratch/<feature-slug>/spec.md`
-- Los tickets son un archivo por ticket en `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numerados desde `01` — nunca un solo archivo combinado
-- El estado de triage se registra en una línea `Status:` cerca del inicio (ver `triage-labels.md` para los roles)
-- Los comentarios e historial de conversación se agregan al final bajo un encabezado `## Comments`
-
-## Cuando una skill dice "publicar al issue tracker"
-
-Crea un archivo nuevo bajo `.scratch/<feature-slug>/` (creando el directorio si hace falta).
-
-## Cuando una skill dice "traer el ticket relevante"
-
-Lee el archivo en la ruta referenciada. El usuario normalmente pasa la ruta o el número directamente.
+- **Spec**: el spec de un esfuerzo se publica como issue en el repo (label `ready-for-agent` si aplica). Para mapas wayfinder, el **mapa** es un issue con label `wayfinder:map` y sus **tickets** son issues hijos con labels `wayfinder:<tipo>`.
+- **Labels por tipo de ticket**: `wayfinder:research` (AFK), `wayfinder:prototype` (HITL), `wayfinder:grilling` (HITL), `wayfinder:task` (HITL/AFK).
+- **Bloqueos**: relación nativa de sub-issues de GitHub. Un ticket está desbloqueado cuando todos sus sub-issues están cerrados.
+- **Resolución**: la respuesta se postea como **comentario** en la issue (`## Answer`), luego se cierra la issue y se agrega un context pointer al mapa.
 
 ## Operaciones de wayfinding
 
-Usadas por `/wayfinder`. El **mapa** es un archivo con un **archivo hijo** por ticket.
+Usadas por `/wayfinder`.
 
-- **Mapa**: `.scratch/<effort>/map.md` — el cuerpo con Notes / Decisions-so-far / Fog.
-- **Ticket hijo**: `.scratch/<effort>/issues/NN-<slug>.md`, numerado desde `01`, con la pregunta en el cuerpo. Una línea `Type:` registra el tipo de ticket (`research`/`prototype`/`grilling`/`task`); una línea `Status:` registra `claimed`/`resolved`.
-- **Bloqueos**: línea `Blocked by: NN, NN` cerca del inicio. Un ticket está desbloqueado cuando todos los archivos que lista están `resolved`.
-- **Frontier**: escanear `.scratch/<effort>/issues/` por archivos que estén abiertos, desbloqueados y sin reclamar; primero por número gana.
-- **Claim**: setear `Status: claimed` y guardar antes de cualquier trabajo.
-- **Resolve**: agregar la respuesta bajo `## Answer`, setear `Status: resolved`, y agregar un context pointer (gist + link) a Decisions-so-far del mapa en `map.md`.
+- **Mapa**: issue con label `wayfinder:map` — el cuerpo lleva Destination / Notes / Decisions-so-far / Not-yet-specified / Out-of-scope.
+- **Ticket hijo**: issue con label `wayfinder:<tipo>`; la pregunta va en el cuerpo. Un sesión reclama un ticket asignándoselo (`gh issue edit N --add-assignee @me`).
+- **Bloqueos**: `gh api -X POST repos/OWNER/REPO/issues/{parent}/sub_issues --input -` con body `{"sub_issue_id": <id numérico de la issue hija>}`. Nota: `sub_issue_id` es el **id numérico** de la issue (obtenible con `gh api repos/.../issues/N --jq .id`), no el número de issue.
+- **Frontier**: `gh issue list` filtrando por `label:"wayfinder:research"`/etc., abiertas, sin asignar y sin sub-issues abiertos.
+- **Claim**: `gh issue edit N --add-assignee @me` antes de trabajar.
+- **Resolve**: comentario con `## Answer`, cerrar la issue (`gh issue close N`), y actualizar Decisions-so-far del mapa.
+
+## Comandos útiles
+
+- Listar issues por label: `gh issue list --label "wayfinder:grilling"`
+- Ver sub-issues de un ticket: `gh api repos/mauriciosoyastor/embodied-ai/issues/N/sub_issues`
+- Crear issue: `gh issue create --title "..." --label "..." --body-file <archivo>`

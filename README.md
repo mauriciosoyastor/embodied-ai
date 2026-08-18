@@ -12,8 +12,7 @@ Roadmap de aprendizaje en **Inteligencia Artificial Corpórea (Embodied AI)** e 
 
 ```
 ├── fase-0/               # Fase 0: fundamentos (Python, git, Linux, Docker)
-├── docs/agents/          # Convenciones del issue tracker local
-├── .scratch/             # Mapa wayfinder, spec y tickets del roadmap
+├── docs/agents/          # Convenciones del issue tracker (GitHub Issues)
 ├── .github/              # CI, plantillas de issues/PR y Dependabot
 ├── CONTEXT.md            # Glosario de dominio
 ├── CONTRIBUTING.md       # Cómo contribuir

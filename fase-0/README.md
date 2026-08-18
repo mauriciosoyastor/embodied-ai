@@ -37,4 +37,4 @@ docker run --rm fase-0-ejemplo
 
 ## Contexto
 
-Decisiones y roadmap en `.scratch/embodied-ai/` (mapa wayfinder, spec y tickets). Ver `docs/agents/issue-tracker.md` para las convenciones del tracker local.
+Decisiones y roadmap en los issues del repo de GitHub (mapa wayfinder con label `wayfinder:map` y tickets). Ver `docs/agents/issue-tracker.md` para las convenciones del tracker.
