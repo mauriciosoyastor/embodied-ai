@@ -11,7 +11,7 @@ from contar_palabras import contar_palabras
 USO = "python main.py <archivo>"
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         print(f"Uso: {USO}")
         sys.exit(1)

@@ -1,0 +1,22 @@
+name: Pregunta / aprendizaje
+description: Dudas del roadmap o del contenido de aprendizaje
+title: "[pregunta]: "
+labels: ["pregunta"]
+body:
+  - type: textarea
+    id: pregunta
+    attributes:
+      label: Tu pregunta
+      description: Escribí la duda con el mayor detalle posible
+    validations:
+      required: true
+  - type: input
+    id: tema
+    attributes:
+      label: Tema relacionado
+      description: Ej. Python, git, Docker, Linux, orquestador, percepción...
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: Qué estabas haciendo/leyendo cuando surgió la duda

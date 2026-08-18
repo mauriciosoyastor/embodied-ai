@@ -1,0 +1,42 @@
+name: Bug report
+description: Reporta un error en el proyecto
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: Descripción
+      description: Qué pasó y qué esperabas que pasara
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Pasos para reproducir
+      description: Pasos concretos para reproducir el error
+      placeholder: |
+        1. Ir a ...
+        2. Ejecutar ...
+        3. Ver error ...
+    validations:
+      required: true
+  - type: dropdown
+    id: entorno
+    attributes:
+      label: Entorno
+      description: Dónde ocurre el error
+      options:
+        - Windows
+        - WSL2 / Linux
+        - Docker
+        - CI (GitHub Actions)
+      default: 0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / salida de error
+      description: Pega la salida del error si la tenés
+      render: shell

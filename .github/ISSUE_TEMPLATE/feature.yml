@@ -1,0 +1,29 @@
+name: Feature request
+description: Proponé una mejora o feature nueva
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qué problema resolvés
+      description: La necesidad detrás de la feature
+    validations:
+      required: true
+  - type: textarea
+    id: solucion
+    attributes:
+      label: Solución propuesta
+      description: Cómo imaginás que debería funcionar
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: Otras opciones que pensaste
+  - type: input
+    id: fase
+    attributes:
+      label: Fase del roadmap
+      description: ¿A qué fase/hito pertenece? (ej. Fase 0, mini-hito 2)
