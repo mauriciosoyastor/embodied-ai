@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 
 [project.optional-dependencies]
 dev = ["ruff", "mypy", "pytest"]
+fase1 = ["google-genai>=1.0.0", "python-dotenv>=1.0.0"]
 
 [tool.setuptools]
 packages = []
@@ -23,7 +24,7 @@ select = ["E", "F", "I", "UP"]
 ignore = []
 
 [tool.pytest.ini_options]
-testpaths = ["fase-0"]
+testpaths = ["fase-0", "fase-1"]
 
 [tool.mypy]
 python_version = "3.12"
