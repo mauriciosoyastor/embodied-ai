@@ -15,7 +15,7 @@ function mount(key) {
   const container = document.getElementById('app');
   container.innerHTML = '';
   const spec = variants[key];
-  active = spec.mount(container, sim.state);
+  active = spec.mount(container, sim);
   document.getElementById('variant-label').textContent = `${key.toUpperCase()} — ${spec.name}`;
 }
 

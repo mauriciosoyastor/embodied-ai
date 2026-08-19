@@ -1,9 +1,11 @@
 import { createRenderer } from '../renderer.js';
 import { createRobot, applyPose } from '../robot.js';
+import { createMissionControls, missionStatus, missionProgress } from '../mission.js';
 
 export const controlroom = {
   name: 'Control room',
-  mount(container, state) {
+  mount(container, sim) {
+    const state = sim.state;
     container.classList.add('v-room');
     const wrap = document.createElement('div');
     wrap.className = 'room-layout';
@@ -18,8 +20,20 @@ export const controlroom = {
     const robot = createRobot();
     r.scene.add(robot.group);
 
+    const wpList = document.createElement('ul');
+    wpList.className = 'wp-list';
+    sim.waypoints.forEach(([x, y], i) => {
+      const li = document.createElement('li');
+      li.dataset.index = i;
+      li.innerHTML = `<span class="wp-idx">${String(i + 1).padStart(2, '0')}</span><span class="wp-xy">(${x}, ${y})</span>`;
+      wpList.appendChild(li);
+    });
+
     dash.innerHTML = `
       <div class="room-head">PANEL DE MISIÓN</div>
+      <div class="room-status">
+        <span>estado</span><b id="m-status">EN ESPERA</b>
+      </div>
       <div class="room-cards">
         <div class="room-card"><span>steps/s</span><b id="m-sps">–</b></div>
         <div class="room-card"><span>frame time</span><b id="m-ft">–</b></div>
@@ -37,15 +51,31 @@ export const controlroom = {
         <span>steps/s · últimos 30 s</span>
         <canvas id="m-spark" width="240" height="60"></canvas>
       </div>
-      <button id="m-reset">Resetear escenario</button>`;
+      <div class="room-wps">
+        <span>waypoints · objetivo <b id="m-wp">1/6</b></span>
+      </div>`;
 
+    const statusEl = dash.querySelector('#m-status');
+    const wpCounter = dash.querySelector('#m-wp');
+    const wpListEl = dash.appendChild(wpList);
     const sparkCtx = dash.querySelector('#m-spark').getContext('2d');
     const sparkData = [];
-    dash.querySelector('#m-reset').addEventListener('click', () => state.reset());
+
+    const { bar, render: renderMission } = createMissionControls(sim);
+    dash.appendChild(bar);
 
     r.setUpdate((dt) => {
-      state.step();
+      sim.step();
       applyPose(robot, state, dt);
+      renderMission();
+      statusEl.textContent = missionStatus(state).label;
+      statusEl.className = `mission-tag ${state.mission}`;
+      wpCounter.textContent = missionProgress(state, sim.totalWaypoints);
+      Array.from(wpListEl.children).forEach((li) => {
+        const i = Number(li.dataset.index);
+        li.classList.toggle('active', i === state.waypoint && state.mission === 'RUNNING');
+        li.classList.toggle('done', i < state.waypoint || state.mission === 'COMPLETED');
+      });
       dash.querySelector('#m-sps').textContent = state.stepsPerSecond.toLocaleString();
       dash.querySelector('#m-ft').textContent = `${state.frameTimeMs.toFixed(1)} ms`;
       dash.querySelector('#m-ag').textContent = state.agents;

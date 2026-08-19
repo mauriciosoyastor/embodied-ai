@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { createRenderer } from '../renderer.js';
 import { createRobot, applyPose } from '../robot.js';
+import { missionStatus, missionProgress } from '../mission.js';
 
 export const cinematic = {
   name: 'Cinemático minimalista',
-  mount(container, state) {
+  mount(container, sim) {
+    const state = sim.state;
     container.classList.add('v-cine');
     const r = createRenderer(container);
     r.controls.enabled = false;
@@ -21,8 +23,10 @@ export const cinematic = {
     const behind = new THREE.Vector3();
     const ahead = new THREE.Vector3();
 
+    sim.startMission();
+
     r.setUpdate((dt) => {
-      state.step();
+      sim.step();
       applyPose(robot, state, dt);
 
       behind.set(
@@ -37,9 +41,10 @@ export const cinematic = {
       r.camera.position.copy(camPos);
       r.camera.lookAt(look);
 
+      const st = missionStatus(state);
       readout.innerHTML = `
         <div class="cine-big">${state.vx.toFixed(2)} m/s · ${state.omega.toFixed(2)} rad/s</div>
-        <div class="cine-small">x ${state.x.toFixed(2)} · y ${state.y.toFixed(2)} · θ ${(state.theta * 180 / Math.PI).toFixed(0)}° · steps/s ${state.stepsPerSecond.toLocaleString()}</div>`;
+        <div class="cine-small">${st.label} · waypoint ${missionProgress(state, sim.totalWaypoints)} · x ${state.x.toFixed(2)} · y ${state.y.toFixed(2)} · θ ${(state.theta * 180 / Math.PI).toFixed(0)}° · steps/s ${state.stepsPerSecond.toLocaleString()}</div>`;
     });
 
     return {

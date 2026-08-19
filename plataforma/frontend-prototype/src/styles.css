@@ -228,6 +228,158 @@ body {
   background: #334155;
 }
 
+/* --- Misión: barra de control compartida --- */
+.mission-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hud-controls .mission-bar {
+  margin-top: 8px;
+}
+
+.room-dash .mission-bar {
+  margin-top: 10px;
+}
+
+.room-dash .mission-bar button {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+
+.mission-bar button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mission-bar .mission-primary {
+  border: 1px solid #38bdf8;
+  background: rgba(14, 116, 144, 0.55);
+  color: #e0f2fe;
+}
+
+.mission-bar .mission-primary:hover {
+  background: rgba(14, 116, 144, 0.85);
+}
+
+.mission-bar .mission-abort {
+  border: 1px solid #f87171;
+  background: rgba(127, 29, 29, 0.45);
+  color: #fee2e2;
+}
+
+.mission-bar .mission-abort:hover {
+  background: rgba(127, 29, 29, 0.75);
+}
+
+.mission-bar .mission-abort:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mission-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.mission-tag.IDLE {
+  background: rgba(100, 116, 139, 0.3);
+  color: #cbd5e1;
+}
+
+.mission-tag.RUNNING {
+  background: rgba(34, 197, 94, 0.25);
+  color: #86efac;
+}
+
+.mission-tag.PAUSED {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fde68a;
+}
+
+.mission-tag.COMPLETED {
+  background: rgba(56, 189, 248, 0.25);
+  color: #7dd3fc;
+}
+
+.mission-tag.ABORTED {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+}
+
+/* --- Misión: Control room --- */
+.room-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #16213a;
+  font-size: 12px;
+}
+
+.room-status span {
+  color: #64748b;
+}
+
+.room-status b {
+  font-weight: 600;
+}
+
+.room-wps span {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.room-wps b {
+  color: #e2e8f0;
+}
+
+.wp-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.wp-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  font-size: 11px;
+  color: #64748b;
+  transition: all 0.15s ease;
+}
+
+.wp-list li.active {
+  border-color: #38bdf8;
+  color: #e2e8f0;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.wp-list li.done {
+  color: #4ade80;
+  text-decoration: line-through;
+}
+
+.wp-idx {
+  opacity: 0.6;
+}
+
 /* --- Variante C: Cinemático minimalista --- */
 .v-cine canvas {
   position: absolute;
