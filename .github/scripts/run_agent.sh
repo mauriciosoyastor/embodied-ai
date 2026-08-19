@@ -110,8 +110,8 @@ cmd_open_pr() {
 cmd_review() {
   require_gh
   local pull="${PULL_NUMBER:?PULL_NUMBER requerido}"
-  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    echo "ANTHROPIC_API_KEY no definido" >&2
+  if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+    echo "ANTHROPIC_AUTH_TOKEN no definido (OpenRouter)" >&2
     exit 1
   fi
 
@@ -147,7 +147,7 @@ PROMPT
   } >> "$prompt_file"
 
   local result verdict summary
-  result="$(claude -p --bare --model opus --max-budget-usd 2 --output-format json < "$prompt_file" \
+  result="$(claude -p --bare --max-budget-usd 2 --output-format json < "$prompt_file" \
     || true)"
   verdict="$(printf '%s' "$result" | jq -r '.[-1].result // empty' 2>/dev/null \
     | jq -r '.verdict // empty' 2>/dev/null || true)"

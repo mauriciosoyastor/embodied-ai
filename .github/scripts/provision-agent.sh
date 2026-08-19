@@ -310,24 +310,29 @@ step "Seleccioná únicamente '$REPO'."
 step "Click 'Install'."
 pause "Confirmá que la app quedó instalada en $REPO"
 
-# ── Stage 4: API key de Anthropic ──────────────────────────────────────────
-stage "API key de Anthropic"
-say "El coder y el reviewer se autentican con ANTHROPIC_API_KEY."
-open_url "https://console.anthropic.com/settings/keys"
-step "Creá una API key nueva (o usá una existente) y copiala."
+# ── Stage 4: API key de OpenRouter (modelos gratuitos) ─────────────────────
+stage "API key de OpenRouter + modelo"
+say "El coder y el reviewer se autentican vía OpenRouter (modelos :free, sin costo)."
+open_url "https://openrouter.ai/keys"
+step "Creá una cuenta en openrouter.ai (no requiere tarjeta) y una API key (sk-or-...)."
 step "Tratá la key como secreto: no la expongas en chats, logs ni commits."
-ask_secret ANTHROPIC_API_KEY "Paste the Anthropic API key (sk-ant-...):"
-if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+ask_secret OPENROUTER_API_KEY "Paste the OpenRouter API key (sk-or-...):"
+if [[ -z "$OPENROUTER_API_KEY" ]]; then
   warn "API key vacía — sin ella el pipeline no puede correr."
   exit 1
 fi
-write_env ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"
+write_env OPENROUTER_API_KEY "$OPENROUTER_API_KEY"
 secure_env
-if secret_exists ANTHROPIC_API_KEY; then
-  warn "El secret ANTHROPIC_API_KEY ya existe — lo dejamos intacto (re-run seguro)."
+if secret_exists OPENROUTER_API_KEY; then
+  warn "El secret OPENROUTER_API_KEY ya existe — lo dejamos intacto (re-run seguro)."
 else
-  set_secret ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"
+  set_secret OPENROUTER_API_KEY "$OPENROUTER_API_KEY"
 fi
+ask AGENT_MODEL "Modelo de OpenRouter a usar [deepseek/deepseek-v4-flash:free]:"
+[[ -z "$AGENT_MODEL" ]] && AGENT_MODEL="deepseek/deepseek-v4-flash:free"
+write_env AGENT_MODEL "$AGENT_MODEL"
+secure_env
+set_var AGENT_MODEL "$AGENT_MODEL"
 
 finish
 say ""
