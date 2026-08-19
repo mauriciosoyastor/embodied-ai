@@ -84,13 +84,15 @@ jobs:
           model_list:
             - model_name: nemotron
               litellm_params:
-                model: openai/nvidia/nemotron-3-super-120b-a12b
+                model: openai/nvidia/llama-3.3-nemotron-super-49b-v1
                 api_base: https://integrate.api.nvidia.com/v1
                 api_key: os.environ/NVIDIA_API_KEY
           router_settings:
             retries: 5
             retry_strategy: exponential_backoff_retry
             cooldown_time: 5
+          litellm_settings:
+            use_chat_completions_url_for_anthropic_messages: true
           EOF
           litellm --config /tmp/litellm.yaml --port 4000 > /tmp/litellm.log 2>&1 &
           for i in $(seq 1 30); do
