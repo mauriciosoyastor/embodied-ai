@@ -45,7 +45,7 @@ jobs:
           model_list:
             - model_name: nemotron
               litellm_params:
-                model: nvidia_nim/openai/gpt-oss-20b
+                model: nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1
                 api_base: https://integrate.api.nvidia.com/v1
                 api_key: os.environ/NVIDIA_API_KEY
           router_settings:
