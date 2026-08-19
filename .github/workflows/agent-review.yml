@@ -1,0 +1,106 @@
+name: Agent Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: agent-issue-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: startsWith(github.event.pull_request.head.ref, 'agent/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Create GitHub App token
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read
+
+      - name: Instalar Claude Code CLI (reviewer)
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Review con red-team
+        id: review
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bash .github/scripts/run_agent.sh review
+
+      - name: Aprobar
+        if: steps.review.outputs.verdict == 'approve'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+          SUMMARY: ${{ steps.review.outputs.summary }}
+        run: |
+          body=$(cat <<'EOF'
+          ## Agent Review: aprobado
+
+          ${{ env.SUMMARY }}
+          EOF
+          )
+          jq -n --arg b "$body" '{event:"APPROVE", body:$b}' \
+            | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
+
+      - name: Pedir cambios (iter < 3) y re-disparar coder
+        if: steps.review.outputs.verdict == 'request_changes' && (steps.review.outputs.iteration | int) < 3
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_NUMBER: ${{ steps.review.outputs.issue }}
+          ITERATION: ${{ steps.review.outputs.iteration }}
+          SUMMARY: ${{ steps.review.outputs.summary }}
+        run: |
+          next=$((ITERATION + 1))
+          body=$(cat <<'EOF'
+          ## Agent Review: cambios solicitados
+
+          ${{ env.SUMMARY }}
+          EOF
+          )
+          jq -n --arg b "$body" '{event:"REQUEST_CHANGES", body:$b}' \
+            | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
+          GH_TOKEN="${{ github.token }}" gh workflow run agent-implement.yml \
+            -f issue_number="$ISSUE_NUMBER" \
+            -f pull_number="$PULL_NUMBER" \
+            -f iteration="$next"
+
+      - name: Agotar loop → needs-human-attention
+        if: steps.review.outputs.verdict == 'request_changes' && (steps.review.outputs.iteration | int) >= 3
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_NUMBER: ${{ steps.review.outputs.issue }}
+        run: |
+          body=$(cat <<'EOF'
+          ## Agent Review: cambios solicitados (loop agotado)
+
+          El pipeline alcanzó el límite de 3 iteraciones. Se requiere atención humana.
+          EOF
+          )
+          jq -n --arg b "$body" '{event:"REQUEST_CHANGES", body:$b}' \
+            | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label needs-human-attention
+          fi
