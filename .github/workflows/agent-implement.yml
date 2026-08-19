@@ -77,14 +77,16 @@ jobs:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
 
-      - name: Implementar con Claude (headless, sonnet)
+      - name: Implementar con Claude (headless, vía OpenRouter)
         run: |
-          claude -p --bare --model sonnet --max-turns 25 --max-budget-usd 5 \
+          claude -p --bare --max-turns 25 --max-budget-usd 5 \
             --permission-mode acceptEdits \
             --allowedTools "Edit,Read,Write,Glob,Grep,Bash(git *),Bash(pip *),Bash(ruff *),Bash(mypy *),Bash(pytest *)" \
             < .agent-prompt.md
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: https://openrouter.ai/api
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.AGENT_MODEL }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Abrir o actualizar PR
