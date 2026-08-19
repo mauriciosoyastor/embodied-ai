@@ -73,6 +73,16 @@ cmd_prepare() {
   gh issue edit "$issue" --repo "$REPO" --remove-label ready-for-agent --add-label agent:in-progress 2>/dev/null || true
 
   cat > .agent-prompt.md <<PROMPT
+Eres un agente de software autónomo. Tu trabajo es resolver el issue completando TODAS las tareas en el repositorio usando tus herramientas (Edit, Write, Read, Glob, Grep, Bash).
+
+REGLAS OBLIGATORIAS:
+1. Implementa la solución modificando los archivos del repo con tus herramientas. NO respondas con instrucciones ni planes: actúa.
+2. Corre los tests (pytest) y el linter (ruff) hasta que pasen.
+3. Commitea los cambios con git (git add + git commit) y pushea la rama con git push.
+4. No dejes trabajo sin commitear: el pipeline depende de que tu rama tenga commits.
+
+Contexto del issue:
+
 Título: ${title}
 Issue: #${issue}
 Labels: ${labels}
