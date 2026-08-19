@@ -77,16 +77,41 @@ jobs:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
 
-      - name: Implementar con Claude (headless, vía OpenRouter)
+      - name: Levantar proxy LiteLLM (Anthropic -> NVIDIA)
+        run: |
+          pip install "litellm[proxy]==1.97.0" "fastapi==0.136.3" -q
+          cat > /tmp/litellm.yaml <<'EOF'
+          model_list:
+            - model_name: nemotron
+              litellm_params:
+                model: openai/nvidia/nemotron-3-super-120b-a12b
+                api_base: https://integrate.api.nvidia.com/v1
+                api_key: os.environ["NVIDIA_API_KEY"]
+          EOF
+          litellm --config /tmp/litellm.yaml --port 4000 > /tmp/litellm.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/health/liveness >/dev/null 2>&1; then
+              echo "Proxy LiteLLM listo"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Proxy LiteLLM no respondió" >&2
+          tail -n 20 /tmp/litellm.log >&2
+          exit 1
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+      - name: Implementar con Claude (headless, vía proxy LiteLLM -> NVIDIA)
         run: |
           claude -p --bare --max-turns 50 --max-budget-usd 5 \
             --permission-mode acceptEdits \
             --allowedTools "Edit,Read,Write,Glob,Grep,Bash(git *),Bash(pip *),Bash(ruff *),Bash(mypy *),Bash(pytest *)" \
             < .agent-prompt.md
         env:
-          ANTHROPIC_BASE_URL: https://openrouter.ai/api
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.OPENROUTER_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.AGENT_MODEL }}
+          ANTHROPIC_BASE_URL: http://127.0.0.1:4000
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.NVIDIA_API_KEY }}
+          ANTHROPIC_MODEL: nemotron
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Abrir o actualizar PR

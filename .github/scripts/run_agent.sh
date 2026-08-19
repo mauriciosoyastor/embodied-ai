@@ -111,7 +111,7 @@ cmd_review() {
   require_gh
   local pull="${PULL_NUMBER:?PULL_NUMBER requerido}"
   if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
-    echo "ANTHROPIC_AUTH_TOKEN no definido (OpenRouter)" >&2
+    echo "ANTHROPIC_AUTH_TOKEN no definido" >&2
     exit 1
   fi
 
