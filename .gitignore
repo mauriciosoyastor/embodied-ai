@@ -7,3 +7,9 @@ venv/
 .vscode/
 .DS_Store
 *.egg-info/
+
+# Secrets del pipeline AFK
+Secrets/
+*.pem
+.env
+.env.*
