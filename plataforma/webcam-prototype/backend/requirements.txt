@@ -1,0 +1,7 @@
+onnxruntime==1.29.0
+opencv-python==4.14.0.94
+mediapipe==1.0.1
+numpy>=2.2
+fastapi>=0.115
+uvicorn>=0.30
+websockets>=12

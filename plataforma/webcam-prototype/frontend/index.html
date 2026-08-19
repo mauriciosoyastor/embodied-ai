@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prototipo P2 — percepción webcam</title>
+  </head>
+  <body>
+    <header id="barra">
+      <h1>Prototipo P2 · percepción webcam → eventos</h1>
+      <div id="estado-loop" class="chip off">loop: desconectado</div>
+      <div id="chip-gesto" class="chip off">gesto: —</div>
+      <div id="telemetria" class="chip">—</div>
+    </header>
+
+    <main>
+      <section id="cam-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="cam"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="leyenda">
+          pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED (info, sin FSM)
+        </div>
+      </section>
+
+      <section id="scene-wrap">
+        <div id="scene"></div>
+        <div id="nota-scene">render del navegador (Three.js) — la inferencia corre en el backend Python</div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
