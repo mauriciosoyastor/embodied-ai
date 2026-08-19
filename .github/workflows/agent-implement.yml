@@ -79,7 +79,7 @@ jobs:
 
       - name: Implementar con Claude (headless, vía OpenRouter)
         run: |
-          claude -p --bare --max-turns 25 --max-budget-usd 5 \
+          claude -p --bare --max-turns 50 --max-budget-usd 5 \
             --permission-mode acceptEdits \
             --allowedTools "Edit,Read,Write,Glob,Grep,Bash(git *),Bash(pip *),Bash(ruff *),Bash(mypy *),Bash(pytest *)" \
             < .agent-prompt.md
