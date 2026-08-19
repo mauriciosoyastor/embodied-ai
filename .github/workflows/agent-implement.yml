@@ -86,7 +86,11 @@ jobs:
               litellm_params:
                 model: openai/nvidia/nemotron-3-super-120b-a12b
                 api_base: https://integrate.api.nvidia.com/v1
-                api_key: os.environ["NVIDIA_API_KEY"]
+                api_key: os.environ/NVIDIA_API_KEY
+          router_settings:
+            retries: 5
+            retry_strategy: exponential_backoff_retry
+            cooldown_time: 5
           EOF
           litellm --config /tmp/litellm.yaml --port 4000 > /tmp/litellm.log 2>&1 &
           for i in $(seq 1 30); do
@@ -98,6 +102,28 @@ jobs:
           done
           echo "Proxy LiteLLM no respondió" >&2
           tail -n 20 /tmp/litellm.log >&2
+          exit 1
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+      - name: Warm-up del modelo NVIDIA (evita cold-start 429)
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /tmp/warmup.json -w "%{http_code}" \
+              -X POST http://127.0.0.1:4000/v1/messages \
+              -H "Authorization: Bearer $NVIDIA_API_KEY" \
+              -H "Content-Type: application/json" \
+              -H "anthropic-version: 2023-06-01" \
+              -d '{"model":"nemotron","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}')
+            if [ "$code" = "200" ]; then
+              echo "Warm-up OK"
+              exit 0
+            fi
+            echo "warm-up intento $i -> HTTP $code"
+            sleep 5
+          done
+          echo "Warm-up falló tras 10 intentos" >&2
+          tail -n 30 /tmp/litellm.log >&2
           exit 1
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
