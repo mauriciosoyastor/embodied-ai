@@ -6,3 +6,7 @@ Función pública del mini-hito 1 de Fase 0.
 
 def contar_palabras(texto: str) -> int:
     return len(texto.split())
+
+
+def contar_caracteres(texto: str) -> int:
+    return len(texto.replace(" ", ""))
