@@ -29,3 +29,9 @@ testpaths = ["fase-0", "fase-1"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest"]
+
+[tool.uv.workspace]
+members = ["plataforma/webcam/backend"]
