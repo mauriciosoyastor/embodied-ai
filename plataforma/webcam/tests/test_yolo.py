@@ -232,7 +232,7 @@ def test_yolo_infer_ws_boxes_normalizadas_via_mock() -> None:
     yolo_mod.get_yolo_detector = _mock_get
     try:
         # ws.run_inference usa get_yolo_detector lazy
-
+        import plataforma.webcam.backend.ws as ws_mod
 
         dummy = (
             "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
