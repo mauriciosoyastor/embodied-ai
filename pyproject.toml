@@ -30,6 +30,12 @@ testpaths = ["fase-0", "fase-1"]
 python_version = "3.12"
 strict = true
 explicit_package_bases = true
+warn_unused_ignores = false
+warn_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["numpy.*", "cv2.*", "fastapi.*", "onnxruntime.*", "mediapipe.*", "PIL.*"]
+ignore_missing_imports = true
 
 [dependency-groups]
 dev = ["ruff", "mypy", "pytest"]

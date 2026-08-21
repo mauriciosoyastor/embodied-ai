@@ -55,7 +55,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync workspace
-        run: uv sync --group dev
+        run: uv sync --all-packages
       - name: Ruff check (webcam)
         run: uv run ruff check plataforma/webcam
       - name: Ruff format check (webcam)
