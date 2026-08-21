@@ -1,0 +1,549 @@
+/* styles.css — S2-D: bundle P1 controlroom base + panel percepción webcam */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #0b0f14;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+}
+
+#app {
+  position: absolute;
+  inset: 0;
+}
+
+#switcher {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+#switcher button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #475569;
+  border-radius: 50%;
+  background: #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#switcher button:hover {
+  background: #334155;
+}
+
+/* --- Variante A: HUD táctico --- */
+.v-hud canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.hud-panel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  min-width: 220px;
+  padding: 12px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+}
+
+.hud-title {
+  margin-bottom: 8px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #38bdf8;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.hud-row span {
+  color: #64748b;
+}
+
+.hud-row b {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.hud-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+}
+
+.hud-controls button {
+  padding: 8px 14px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.85);
+  color: #e2e8f0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.hud-controls button:hover {
+  background: #334155;
+}
+
+/* --- Variante B: Control room --- */
+.v-room .room-layout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.room-viewport {
+  position: relative;
+  flex: 1;
+}
+
+.room-viewport canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.room-dash {
+  width: 320px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  border-left: 1px solid #1e293b;
+  background: #0f172a;
+}
+
+.room-head {
+  margin-bottom: 12px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: #38bdf8;
+}
+
+.room-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.room-card {
+  padding: 10px;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #1e293b;
+}
+
+.room-card span {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.room-card b {
+  font-size: 16px;
+  color: #e2e8f0;
+}
+
+.room-table {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.room-table div {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #16213a;
+  font-size: 12px;
+}
+
+.room-table span {
+  color: #64748b;
+}
+
+.room-spark span {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.room-spark canvas {
+  width: 100%;
+  height: 60px;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  background: #0b1220;
+}
+
+.room-dash button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.room-dash button:hover {
+  background: #334155;
+}
+
+/* --- Misión: barra de control compartida --- */
+.mission-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hud-controls .mission-bar {
+  margin-top: 8px;
+}
+
+.room-dash .mission-bar {
+  margin-top: 10px;
+}
+
+.room-dash .mission-bar button {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+
+.mission-bar button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mission-bar .mission-primary {
+  border: 1px solid #38bdf8;
+  background: rgba(14, 116, 144, 0.55);
+  color: #e0f2fe;
+}
+
+.mission-bar .mission-primary:hover {
+  background: rgba(14, 116, 144, 0.85);
+}
+
+.mission-bar .mission-abort {
+  border: 1px solid #f87171;
+  background: rgba(127, 29, 29, 0.45);
+  color: #fee2e2;
+}
+
+.mission-bar .mission-abort:hover {
+  background: rgba(127, 29, 29, 0.75);
+}
+
+.mission-bar .mission-abort:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mission-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.mission-tag.IDLE {
+  background: rgba(100, 116, 139, 0.3);
+  color: #cbd5e1;
+}
+
+.mission-tag.RUNNING {
+  background: rgba(34, 197, 94, 0.25);
+  color: #86efac;
+}
+
+.mission-tag.PAUSED {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fde68a;
+}
+
+.mission-tag.COMPLETED {
+  background: rgba(56, 189, 248, 0.25);
+  color: #7dd3fc;
+}
+
+.mission-tag.ABORTED {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+}
+
+/* --- Misión: Control room --- */
+.room-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #16213a;
+  font-size: 12px;
+}
+
+.room-status span {
+  color: #64748b;
+}
+
+.room-status b {
+  font-weight: 600;
+}
+
+.room-wps span {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.room-wps b {
+  color: #e2e8f0;
+}
+
+.wp-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.wp-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  font-size: 11px;
+  color: #64748b;
+  transition: all 0.15s ease;
+}
+
+.wp-list li.active {
+  border-color: #38bdf8;
+  color: #e2e8f0;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.wp-list li.done {
+  color: #4ade80;
+  text-decoration: line-through;
+}
+
+.wp-idx {
+  opacity: 0.6;
+}
+
+/* --- Variante C: Cinemático minimalista --- */
+.v-cine canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.v-cine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 6, 12, 0.55) 100%);
+}
+
+.cine-readout {
+  position: absolute;
+  left: 20px;
+  bottom: 18px;
+  z-index: 10;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.cine-big {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.cine-small {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* --- S2-D: Percepción webcam --- */
+.percepcion-panel {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.percepcion-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #38bdf8;
+}
+
+.percepcion-head .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #475569;
+}
+
+.percepcion-head .dot.on {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.percepcion-head .dot.off {
+  background: #ef4444;
+}
+
+.cam-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #020617;
+}
+
+.cam-wrap video,
+.cam-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#overlay {
+  pointer-events: none;
+}
+
+.cam-hidden {
+  display: none;
+}
+
+#cam {
+  display: none;
+}
+
+.percepcion-chips {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.percepcion-chips .chip {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #16213a;
+  border: 1px solid #1e293b;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip.on {
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+.chip.off {
+  color: #94a3b8;
+}
+
+.chip.mission-tag {
+  border-radius: 6px;
+}
+
+.percepcion-telem {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.percepcion-telem b {
+  display: block;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.percepcion-hint {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.percepcion-controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.percepcion-controls button {
+  flex: 1;
+  margin-top: 0;
+  padding: 6px;
+  font-size: 11px;
+}
