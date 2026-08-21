@@ -135,7 +135,7 @@ def test_gesto_reconocido_es_desacoplado() -> None:
 
 def test_ws_run_inference_gesto_allowed_via_stub() -> None:
     """ws.run_inference debe retornar gesto en ALLOWED_LABELS aun sin modelo."""
-    from plataforma.webcam.backend.ws import run_inference
+
 
     dummy_jpeg = (
         "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHB"
