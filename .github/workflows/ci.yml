@@ -64,5 +64,3 @@ jobs:
         run: uv run mypy plataforma/webcam
       - name: Pytest (webcam) headless
         run: uv run pytest plataforma/webcam -q
-        env:
-          PYTHONPATH: .

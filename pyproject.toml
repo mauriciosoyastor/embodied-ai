@@ -26,6 +26,7 @@ ignore = []
 
 [tool.pytest.ini_options]
 testpaths = ["fase-0", "fase-1"]
+pythonpath = ["."]
 
 [tool.mypy]
 python_version = "3.12"
