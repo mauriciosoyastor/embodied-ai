@@ -117,7 +117,7 @@ jobs:
             | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
 
       - name: Pedir cambios (iter < 3) y re-disparar coder
-        if: steps.review.outputs.verdict == 'request_changes' && (steps.review.outputs.iteration | int) < 3
+        if: steps.review.outputs.verdict == 'request_changes' && fromJSON(steps.review.outputs.iteration) < 3
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PULL_NUMBER: ${{ github.event.pull_request.number }}
@@ -140,7 +140,7 @@ jobs:
             -f iteration="$next"
 
       - name: Agotar loop → needs-human-attention
-        if: steps.review.outputs.verdict == 'request_changes' && (steps.review.outputs.iteration | int) >= 3
+        if: steps.review.outputs.verdict == 'request_changes' && fromJSON(steps.review.outputs.iteration) >= 3
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PULL_NUMBER: ${{ github.event.pull_request.number }}

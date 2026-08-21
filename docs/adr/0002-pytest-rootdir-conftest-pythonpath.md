@@ -14,7 +14,7 @@ añadía la raíz a `sys.path` → `from plataforma...` fallaba incluso instalad
 1. **Raíz como paquete instalable**: `pyproject.toml:14` ` [tool.setuptools.packages.find] where=["."] include=["plataforma*"]` + `uv.lock` commiteado. `pip install -e .` y `uv sync --all-packages` exponen `plataforma`.
 2. **Ancla pytest definitiva**: `conftest.py` vacío en la raíz — pytest lo usa como `rootdir` e inyecta automáticamente la raíz a `sys.path` en cualquier entorno (local/CI), sin env vars.
 3. **Redundancia declarativa**: `pyproject.toml:26` `[tool.pytest.ini_options] pythonpath = ["."]` — cubre runners donde `conftest` no se detecta por `testpaths`. Ambas capas (conftest + pythonpath) son intencionales.
-4. **Mypy alineado**: `pyproject.toml:29` `explicit_package_bases = true` + `disallow_untyped_decorators = false` (con `strict=true` es `disallow`, no `warn`) + `[[tool.mypy.overrides]] ignore_missing_imports` para `numpy.*`, `cv2.*`, `fastapi.*`, `onnxruntime.*`, `mediapipe.*`, `PIL.*` + temporal `plataforma.webcam.backend.ws` hasta merge completo de S2.
+4. **Mypy alineado**: `pyproject.toml` `explicit_package_bases = true` + `disallow_untyped_decorators = false` (con `strict=true` es `disallow`, no `warn`) + `[[tool.mypy.overrides]] ignore_missing_imports` para `numpy.*`, `cv2.*`, `fastapi.*`, `onnxruntime.*`, `mediapipe.*`, `PIL.*`. El override temporal de `plataforma.webcam.backend.ws` se retiró al aterrizar S2-B (ver `docs/agents/lessons/0005-mypy-overrides-temporales.md`).
 
 **Alternativas descartadas**
 - Solo `PYTHONPATH=.` en `ci.yml` — frágil en `bash -e`, no cubre local sin export.

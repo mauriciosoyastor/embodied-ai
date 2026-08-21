@@ -12,3 +12,9 @@ Secrets/
 *.pem
 .env
 .env.*
+# Frontend / Node
+node_modules/
+dist/
+# Artefactos de agentes locales (OpenCode)
+trajectory.jsonl
+.opencode/node_modules/

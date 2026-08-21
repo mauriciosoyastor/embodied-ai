@@ -39,10 +39,6 @@ disallow_untyped_decorators = false
 module = ["numpy.*", "cv2.*", "fastapi.*", "onnxruntime.*", "mediapipe.*", "PIL.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["plataforma.webcam.backend.ws"]
-ignore_missing_imports = true
-
 [dependency-groups]
 dev = ["ruff", "mypy", "pytest"]
 
