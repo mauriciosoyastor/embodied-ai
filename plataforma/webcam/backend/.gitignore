@@ -1,0 +1,11 @@
+models/*
+!models/.gitignore
+*.onnx
+*.task
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
