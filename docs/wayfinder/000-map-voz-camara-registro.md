@@ -1,6 +1,6 @@
 # Wayfinder Map — Voz + Registro por Cámara
 
-> Label: `wayfinder:map` · Estado: abierto · Tracker: local-markdown (sin GitHub issues configurado)
+> Label: `wayfinder:map` · Estado: cerrado — way completo · Tracker: local-markdown · Creado: 2026-08-21 · Cerrado: 2026-08-22
 
 ## Destination
 
