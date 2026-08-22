@@ -43,4 +43,4 @@ ignore_missing_imports = true
 dev = ["ruff", "mypy", "pytest"]
 
 [tool.uv.workspace]
-members = ["plataforma/webcam/backend"]
+members = ["plataforma/webcam/backend", "plataforma/sim"]

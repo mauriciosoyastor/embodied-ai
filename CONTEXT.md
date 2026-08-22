@@ -13,7 +13,8 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 
 - **Orquestador cognitivo**: el "cerebro" local del agente; gestiona estados y coordina modelos.
 - **StateGraph**: estructura para transiciones lógicas de estado del agente.
-- **Whiteboard**: mecanismo de intercambio de contexto entre modelos.
+- **Whiteboard / WhiteboardState**: mecanismo de intercambio de contexto entre modelos; en sim `WhiteboardState(BaseModel)` dentro de `MissionState` (`ctx.state.whiteboard`) con `estado, frame_id, last_gesto, last_observation, last_decision, metrics`, **sin `transcript`** (voz queda en `plataforma/webcam`), single-writer memoria, `Reducer` en fog.
+- **Whiteboard**: mecanismo de intercambio de contexto entre modelos. (ver WhiteboardState)
 - **Reducer**: consolidación de estados del agente.
 - **Grammar-Constrained Decoding**: restricción de la salida del LLM a un esquema estricto (ej. Pydantic).
 - **Glass-to-Glass Latency**: tiempo total desde la captura del fotón hasta el renderizado del píxel procesado. Meta: < 200ms.
@@ -57,6 +58,8 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **evento_observacion**: telemetría informativa `{ frame_id, cls, conf, area }` emitida cuando YOLO detecta `person` con `conf>0.6` y `area>15%`; no dispara transiciones de la FSM.
 - **ABORTED latch**: estado `ABORTED` enclavado que ignora todo gesto hasta `reset()` explícito; prioridad absoluta sobre `RUNNING`/`PAUSED`.
 - **handle_gesto**: función pura `Estado = handle_gesto(GestoReconocido)` con histéresis N=5 frames consecutivos (`conf≥0.7`, ~500 ms @10 Hz); permite tests headless sin cámara.
+- **SIM_IDLE / SIM_RUNNING / SIM_PAUSED / SIM_ABORTED**: estados del StateGraph sim (`plataforma/sim`) espejo de `MissionFSM`; `SIM_ABORTED` es `End[data=ABORTED]` terminal en `pydantic-graph` hasta `reset()` externo. Histéresis N=5 idéntica, `none`/`<0.7`=no-op, `TickNode` avanza `frame_id` a 10Hz.
+- **TickNode / DecisionNode / ActNode**: nodos `pydantic-graph` `BaseNode[StateT,DepsT,RunEndT]` — `TickNode` avanza sim 100ms, `DecisionNode` (solo si `SIM_RUNNING`) invoca `Agent[HardwareContext,DecisionAgentica]` (Muse Spark/TestModel) → `CmdVel`, `ActNode` hace `FakeAdapter.send_cmd_vel`+`step`.
 
 ## Términos del pipeline de agentes (workflow AFK)
 
@@ -68,3 +71,14 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Installation access token**: token de una GitHub App (expira en 1h) que actúa en nombre de la app; otorga permisos acotados y re-dispara workflows.
 - **Labels del ciclo**: `ready-for-agent` (disparador) → `agent:in-progress` (trabajando) → `needs-human-attention` (loop agotado) | `APPROVE` → merge humano.
 - **Rama de agente**: rama `agent/<issue-number>-<slug>` creada por el coder; el reviewer solo procesa PRs con head `agent/`.
+
+## Términos de interacción voz y registro facial (Voz + Cámara)
+
+- **Push-to-talk**: activación de micrófono por pulsación mantenida del botón; evita escucha continua y falsos positivos. Encaja con throttling `MAX_FPS=10` y `WS_BUFFERED_LIMIT` de `ws-client.js`.
+- **STT (Speech-to-Text)**: conversión audio→texto vía Web Speech API (`webkitSpeechRecognition`) en `es-AR`; híbrido con servidor solo si falla el browser. Latencia objetivo <500 ms.
+- **TTS (Text-to-Speech)**: síntesis voz desde texto vía `speechSynthesis` del browser en `es-AR`; reproduce respuesta del LLM sin salir del frontend.
+- **Transcript**: par `usuario→LLM` y `LLM→usuario` mostrado en panel `percepcion-panel` (`plataforma/webcam/frontend/src/main.js`); fuente para telemetría y debug.
+- **Enrollment facial**: flujo `YOLO person (conf>0.6)` → detector facial (MediaPipe Face) → recorte 160×160 → extracción embedding → asociación a nombre. Se dispara con `thumbs_up` confirmado por histéresis (reusa `GestoReconocido`).
+- **Embedding facial**: vector denso (ej. 128-d) que representa identidad; comparación por distancia coseno <0.4 = match. No almacena imagen cruda por privacidad.
+- **Registro (face)**: persistencia de `embedding + nombre + ts` en `localStorage` y opcional `backend/models/identities.json`; permite re-identificar `person` en frames posteriores sin re-enrollar.
+- **Muse Spark 1.2 free**: LLM por defecto `opencode/muse-spark-1.2-contributor-free` (Cursor free tier) vía API OpenAI-compatible; expone `OPENCODE_API_KEY/CURSOR_API_KEY/OPENAI_API_KEY` en `fase-1/.env`. Reemplaza `gemini-3.6-flash` en `fase-1/gemini_client.py` y `orchestrator.py` (`openai:opencode/muse-spark-1.2-contributor-free`).
