@@ -16,6 +16,8 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 
 <!-- índice — una línea por ticket cerrado: gist + link; el detalle vive en el ticket -->
 
+- [Research MuJoCo Python & headless — Ticket 014](tickets/014-research-mujoco-python.md) — `mujoco>=3.0.0` agregado en `plataforma/sim/pyproject.toml`, mypy override `mujoco.*`, y bucle `mujoco.mj_step` validado como nativo headless en CPU/memoria sin requerir display (2026-08-22) — desbloquea 016 partial
+
 ## Not yet specified
 
 <!-- fog hacia el destino — no ticketizable aún con nitidez; gradúa cuando la frontera avance -->
@@ -30,9 +32,10 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 
 ## Tickets (frontera)
 
-### Ticket 014 — Research: MuJoCo Python package y loop headless en uv [wayfinder:research] — ABIERTO
+### Ticket 014 — Research: MuJoCo Python package y loop headless en uv [wayfinder:research] — CERRADO 2026-08-22 (AFK)
 **Question:** ¿Cómo instalar y configurar `mujoco` Python package en el entorno uv del monorepo, y gestionar el step loop headless (sin ventana gráfica) para tests automáticos?
 **Bloquea:** 016
+**Estado:** cerrado — ver [014](tickets/014-research-mujoco-python.md)
 
 ### Ticket 015 — Grilling: Modelo MJCF TurtleBot y cinemática diferencial [wayfinder:grilling] — ABIERTO
 **Question:** ¿Qué archivo MJCF usar (incorporado en `mujoco` assets o custom minimalista) y cómo implementar la cinemática inversa diferencial `(v_x, omega) → (omega_l, omega_r)` acorde al `CmdVel` del orquestador?
