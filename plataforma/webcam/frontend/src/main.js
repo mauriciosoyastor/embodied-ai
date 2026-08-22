@@ -2,6 +2,8 @@ import { createMockSim } from "./sim.js";
 import { variants } from "./variants/index.js";
 import { createPerceptionClient } from "../ws-client.js";
 import { createOverlay } from "../overlay.js";
+import { createVoiceChat } from "./voice-chat.js";
+import { createEnrollmentPanel } from "./enrollment-panel.js";
 import "../styles.css";
 
 const sim = createMockSim();
@@ -114,7 +116,51 @@ function attachPercepcionPanel() {
 
 function initPercepcion() {
   percepcion = createPercepcionDOM();
+  // Voz chat — variante chat (ticket 003) plegada a producción + enrollment voz (005)
+  let enrollmentRef = null;
+  const voice = createVoiceChat({
+    onSendToLLM: async (text) => {
+      // Pre-llenar nombre si parece intención de registro (005)
+      if (enrollmentRef && /me llamo|soy |mi nombre es/i.test(text)) {
+        try {
+          enrollmentRef.setNombreFromVoice(text);
+        } catch {}
+      }
+      // Intenta backend voz si existe (ticket 004), fallback mock ya en voice-chat.js
+      try {
+        const r = await fetch("http://localhost:8001/voz", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: text }),
+        });
+        if (r.ok) {
+          const j = await r.json();
+          if (j && j.text) return j.text;
+          if (j && j.reply) return j.reply;
+        }
+      } catch {}
+      return null;
+    },
+  });
+  percepcion.appendChild(voice.element);
+  // Enrollment facial — Ticket 005 grilling (consent localStorage, N=5)
+  const enrollment = createEnrollmentPanel({
+    videoEl: null, // se asigna tras crear video
+    canvasEl: null,
+    onEnroll: (rec) => {
+      // feedback voz al registrar
+      try {
+        voice.addBotMessage?.(`¡Registrado ${rec.nombre}! Quedaste en galería local (${rec.id.slice(0,4)}).`);
+      } catch {}
+    },
+  });
+  enrollmentRef = enrollment;
+  percepcion.appendChild(enrollment.element);
   const video = percepcion.querySelector("#webcam");
+  // actualizar ref video en enrollment (005)
+  try {
+    enrollment.setVideoEl(video);
+  } catch {}
   const cam = percepcion.querySelector("#cam");
   const overlayCanvas = percepcion.querySelector("#overlay");
   const gestoEl = percepcion.querySelector("#p-gesto");
@@ -144,14 +190,25 @@ function initPercepcion() {
     url: "ws://localhost:8001/ws/percepcion",
     onDetecciones: (payload, env) => {
       overlay.handleDetecciones(payload);
-      // telemetría: si backend mandara timing, usarlo
+      try {
+        enrollment.handleDetecciones(payload);
+      } catch {}
       if (payload && typeof payload.infer_ms === "number") {
         overlay.setTelemetry({ inferMs: payload.infer_ms, totalMs: payload.total_ms });
       }
-      // actualizar fps local ya en handleDetecciones
     },
-    onGesto: (payload) => overlay.handleGesto(payload),
-    onEstado: (payload) => overlay.handleEstado(payload),
+    onGesto: (payload) => {
+      overlay.handleGesto(payload);
+      try {
+        enrollment.handleGesto(payload);
+      } catch {}
+    },
+    onEstado: (payload) => {
+      overlay.handleEstado(payload);
+      try {
+        enrollment.handleEstado(payload);
+      } catch {}
+    },
   });
 
   // monkey-patch onopen/onclose para dot
@@ -250,9 +307,16 @@ function initPercepcion() {
       { x: 0.55, y: 0.3, w: 0.18, h: 0.22, cls: "chair", conf: 0.71 },
     ];
     overlay.drawBoxes(demoBoxes);
+    try {
+      enrollment.handleDetecciones({ boxes: demoBoxes });
+    } catch {}
     const gestures = ["open_palm", "fist", "thumbs_up", "none"];
     const g = gestures[Math.floor(Math.random() * gestures.length)];
-    overlay.setGesto({ label: g, conf: 0.85, frame_id: webcam.frameId++ });
+    const payload = { label: g, conf: 0.85, frame_id: webcam.frameId++ };
+    overlay.setGesto(payload);
+    try {
+      enrollment.handleGesto(payload);
+    } catch {}
     overlay.setTelemetry({ fps: 10, inferMs: 42 });
     // también mostrar que mock funciona sin WS
     placeholder.style.display = "none";
