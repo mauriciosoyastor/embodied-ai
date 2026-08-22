@@ -15,6 +15,16 @@ Secrets/
 # Frontend / Node
 node_modules/
 dist/
+# Privacidad embeddings local (Ticket 007) — nunca commitear biometría
+identities.json
+gallery.json
+**/identities.json
+plataforma/webcam/backend/models/identities.json
+plataforma/webcam/frontend/public/models/*.onnx
+plataforma/webcam/frontend/src/*.identities
+# Logs locales de servidores dev
+*.log
+*.err
 # Artefactos de agentes locales (OpenCode)
 trajectory.jsonl
-.opencode/node_modules/
+.opencode/
