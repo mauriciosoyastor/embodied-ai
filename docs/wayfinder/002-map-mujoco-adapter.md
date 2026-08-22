@@ -17,6 +17,7 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 <!-- índice — una línea por ticket cerrado: gist + link; el detalle vive en el ticket -->
 
 - [Research MuJoCo Python & headless — Ticket 014](tickets/014-research-mujoco-python.md) — `mujoco>=3.0.0` agregado en `plataforma/sim/pyproject.toml`, mypy override `mujoco.*`, y bucle `mujoco.mj_step` validado como nativo headless en CPU/memoria sin requerir display (2026-08-22) — desbloquea 016 partial
+- [Grilling Modelo MJCF & cinemática — Ticket 015](tickets/015-grilling-turtlebot-mjcf.md) — MJCF minimalista inline (base libre + ruedas left/right), cinemática diferencial con $L=0.23, R=0.033$ y clamping de `CmdVel` (2026-08-22) — desbloquea 016
 
 ## Not yet specified
 
@@ -37,9 +38,10 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 **Bloquea:** 016
 **Estado:** cerrado — ver [014](tickets/014-research-mujoco-python.md)
 
-### Ticket 015 — Grilling: Modelo MJCF TurtleBot y cinemática diferencial [wayfinder:grilling] — ABIERTO
+### Ticket 015 — Grilling: Modelo MJCF TurtleBot y cinemática diferencial [wayfinder:grilling] — CERRADO 2026-08-22 (HITL)
 **Question:** ¿Qué archivo MJCF usar (incorporado en `mujoco` assets o custom minimalista) y cómo implementar la cinemática inversa diferencial `(v_x, omega) → (omega_l, omega_r)` acorde al `CmdVel` del orquestador?
 **Bloquea:** 016
+**Estado:** cerrado — ver [015](tickets/015-grilling-turtlebot-mjcf.md)
 
 ### Ticket 016 — Prototype: MujocoAdapter cumpliendo adapter.Protocol [wayfinder:prototype] — ABIERTO
 **Question:** ¿Cómo estructurar `plataforma/sim/mujoco_adapter.py` instanciando `mujoco.MjModel`/`MjData`, ejecutando step a 10Hz y mapeando `SimObservation` (pose, velocidad) y `CmdVel`?
