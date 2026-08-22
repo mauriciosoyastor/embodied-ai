@@ -1,0 +1,57 @@
+{
+  "_comment": "Política de boundaries — Clean Architecture concéntrica. Generada por CI (import-linter + dependency-cruiser). D4 del mapa #60. Flechas solo hacia adentro.",
+  "version": 1,
+  "zones": {
+    "centro": {
+      "label": "Downtown — orquestador / entidades",
+      "color": "#c0392b",
+      "height": 3,
+      "description": "Peatonal: ningún import desde periferia permitido. Estabilidad > 0.75."
+    },
+    "industrial": {
+      "label": "Industrial — percepción visual",
+      "color": "#d4a017",
+      "height": 2,
+      "description": "Un solo sentido: periphery→center datos permitidos, center→periphery prohibido."
+    },
+    "suburbios": {
+      "label": "Suburbios — sim / webcam",
+      "color": "#27ae60",
+      "height": 1,
+      "description": "Pueden exportar datos al centro pero no importar lógica de decisión."
+    },
+    "outskirts": {
+      "label": "Outskirts — visor Three.js",
+      "color": "#7f8c8d",
+      "height": 0,
+      "description": "Periferia pura. Solo consume eventos visuales."
+    }
+  },
+  "rules": {
+    "forbidden": [
+      "centro -> industrial",
+      "centro -> suburbios",
+      "centro -> outskirts",
+      "industrial -> outskirts"
+    ],
+    "allowed": [
+      "industrial -> centro",
+      "suburbios -> centro",
+      "suburbios -> industrial",
+      "outskirts -> suburbios",
+      "outskirts -> industrial"
+    ],
+    "free": ["*.utils -> *", "* -> *.types"]
+  },
+  "thresholds": {
+    "stability_center_min": 0.75,
+    "abstraction_center_min": 0.3,
+    "width_many_imports_px": 80,
+    "width_few_imports_px": 20
+  },
+  "streetColors": {
+    "forbidden": "#e74c3c",
+    "allowed": "#2ecc71",
+    "free": "#95a5a6"
+  }
+}

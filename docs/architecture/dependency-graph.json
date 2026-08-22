@@ -1,0 +1,22 @@
+{
+  "_comment": "Grafo de dependencias — ejemplo CI. Generado por scripts/gen-city-grafo.js (import-linter + dependency-cruiser). Consumido por city-model.html.",
+  "generatedAt": "2026-08-21T00:00:00Z",
+  "nodes": [
+    { "id": "orquestador", "zone": "centro", "path": "fase-1/orchestrator.py", "stability": 0.88, "abstraction": 0.42, "imports": 5 },
+    { "id": "entidades", "zone": "centro", "path": "plataforma/sim/contract.py", "stability": 0.91, "abstraction": 0.55, "imports": 2 },
+    { "id": "percepcion/mediaPipe", "zone": "industrial", "path": "plataforma/webcam/mediapipe", "stability": 0.62, "abstraction": 0.18, "imports": 4 },
+    { "id": "percepcion/yolo", "zone": "industrial", "path": "plataforma/webcam/yolo", "stability": 0.58, "abstraction": 0.15, "imports": 3 },
+    { "id": "sim/mujoco", "zone": "suburbios", "path": "plataforma/sim/adapters/mujoco.py", "stability": 0.44, "abstraction": 0.08, "imports": 2 },
+    { "id": "webcam/backend", "zone": "suburbios", "path": "plataforma/webcam/backend", "stability": 0.39, "abstraction": 0.12, "imports": 4 },
+    { "id": "visor/three", "zone": "outskirts", "path": "plataforma/frontend/src/visor", "stability": 0.22, "abstraction": 0.05, "imports": 1 },
+    { "id": "fase-1/orchestrator", "zone": "centro", "path": "fase-1/orchestrator.py", "stability": 0.85, "abstraction": 0.38, "imports": 3 }
+  ],
+  "edges": [
+    { "from": "percepcion/mediaPipe", "to": "orquestador", "status": "allowed", "color": "#2ecc71" },
+    { "from": "percepcion/yolo", "to": "orquestador", "status": "allowed", "color": "#2ecc71" },
+    { "from": "sim/mujoco", "to": "orquestador", "status": "allowed", "color": "#2ecc71" },
+    { "from": "webcam/backend", "to": "percepcion/yolo", "status": "free", "color": "#95a5a6" },
+    { "from": "visor/three", "to": "webcam/backend", "status": "free", "color": "#95a5a6" },
+    { "from": "orquestador", "to": "visor/three", "status": "forbidden", "color": "#e74c3c", "violation": true }
+  ]
+}
