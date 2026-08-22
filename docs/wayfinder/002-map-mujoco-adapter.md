@@ -1,6 +1,6 @@
 # Wayfinder Map — MujocoAdapter Real (TurtleBot Diferencial)
 
-> Label: `wayfinder:map` · Estado: abierto · Tracker: local-markdown · Creado: 2026-08-22
+> Label: `wayfinder:map` · Estado: cerrado — way completo · Tracker: local-markdown · Creado: 2026-08-22 · Cerrado: 2026-08-22
 
 ## Destination
 
@@ -18,6 +18,8 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 
 - [Research MuJoCo Python & headless — Ticket 014](tickets/014-research-mujoco-python.md) — `mujoco>=3.0.0` agregado en `plataforma/sim/pyproject.toml`, mypy override `mujoco.*`, y bucle `mujoco.mj_step` validado como nativo headless en CPU/memoria sin requerir display (2026-08-22) — desbloquea 016 partial
 - [Grilling Modelo MJCF & cinemática — Ticket 015](tickets/015-grilling-turtlebot-mjcf.md) — MJCF minimalista inline (base libre + ruedas left/right), cinemática diferencial con $L=0.23, R=0.033$ y clamping de `CmdVel` (2026-08-22) — desbloquea 016
+- [Prototype MujocoAdapter — Ticket 016](tickets/016-prototype-mujoco-adapter.md) — `MujocoAdapter` implementado en `plataforma/sim/mujoco_adapter.py` cumpliendo `SimAdapter` Protocol, step 10Hz, extracción de pose (x,y,yaw) desde quaterniones del root freejoint y velocidades espaciales (2026-08-22) — desbloquea 017
+- [Task Integración CI headless — Ticket 017](tickets/017-task-ci-headless-mujoco.md) — `mujoco` instalado por `uv sync`, tests unitarios en `test_mujoco_adapter.py` (9 passed, mypy verde) operando con física real headless (2026-08-22) — **mapa sin frontera**
 
 ## Not yet specified
 
@@ -43,9 +45,11 @@ Implementar y validar `MujocoAdapter` real en `plataforma/sim` usando MuJoCo (MJ
 **Bloquea:** 016
 **Estado:** cerrado — ver [015](tickets/015-grilling-turtlebot-mjcf.md)
 
-### Ticket 016 — Prototype: MujocoAdapter cumpliendo adapter.Protocol [wayfinder:prototype] — ABIERTO
+### Ticket 016 — Prototype: MujocoAdapter cumpliendo adapter.Protocol [wayfinder:prototype] — CERRADO 2026-08-22 (HITL)
 **Question:** ¿Cómo estructurar `plataforma/sim/mujoco_adapter.py` instanciando `mujoco.MjModel`/`MjData`, ejecutando step a 10Hz y mapeando `SimObservation` (pose, velocidad) y `CmdVel`?
 **Bloquea:** 017
+**Estado:** cerrado — ver [016](tickets/016-prototype-mujoco-adapter.md)
 
-### Ticket 017 — Task: Integración con CI headless y pytest suite [wayfinder:task] — ABIERTO
+### Ticket 017 — Task: Integración con CI headless y pytest suite [wayfinder:task] — CERRADO 2026-08-22 (AFK)
 **Question:** Asegurar que `pytest plataforma/sim -q` ejecute con el `MujocoAdapter` real en máquinas con MuJoCo instalado, y salte gracefully o use FakeAdapter en entornos CI limpios donde MuJoCo C++ no esté disponible.
+**Estado:** cerrado — ver [017](tickets/017-task-ci-headless-mujoco.md)

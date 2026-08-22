@@ -25,6 +25,7 @@ plataforma/webcam/frontend/src/*.identities
 # Logs locales de servidores dev
 *.log
 *.err
+MUJOCO_LOG.TXT
 # Artefactos de agentes locales (OpenCode)
 trajectory.jsonl
 .opencode/
