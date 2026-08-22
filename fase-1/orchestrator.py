@@ -34,8 +34,12 @@ class DecisionAgentica(BaseModel):
 
 
 def crear_orquestador(
-    modelo: str = "google:gemini-1.5-flash",
+    modelo: str = "openai:opencode/muse-spark-1.2-contributor-free",
 ) -> Agent[HardwareContext, DecisionAgentica]:
+    """Modelo por defecto: Muse Spark 1.2 free (Cursor) vía OpenAI-compatible API.
+    Requiere OPENCODE_API_KEY/CURSOR_API_KEY/OPENAI_API_KEY en .env.
+    Legacy: google:gemini-1.5-flash sigue soportado si se pasa explícito.
+    """
     """Crea y configura el agente orquestador con Pydantic AI."""
     agent = Agent(
         modelo,

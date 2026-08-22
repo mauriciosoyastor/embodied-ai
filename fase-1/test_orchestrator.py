@@ -15,7 +15,8 @@ def test_orquestador_decision_exitosa(
 
     válido usando TestModel.
     """
-    monkeypatch.setenv("GOOGLE_API_KEY", "dummy-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key")
+    monkeypatch.setenv("OPENCODE_API_KEY", "dummy-key")
     agent = crear_orquestador()
 
     # Usamos TestModel para simular la respuesta estructurada sin llamadas de red
