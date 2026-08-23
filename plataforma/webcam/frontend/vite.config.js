@@ -6,7 +6,7 @@ export default defineConfig({
     open: false,
     proxy: {
       "/ws/percepcion": {
-        target: "ws://localhost:8001",
+        target: "ws://localhost:8000",
         ws: true,
         changeOrigin: true,
       },

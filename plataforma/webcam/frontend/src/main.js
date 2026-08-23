@@ -82,7 +82,7 @@ function createPercepcionDOM() {
       <button id="p-start">Iniciar cámara</button>
       <button id="p-mock">Mock boxes</button>
     </div>
-    <div class="percepcion-hint">pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED · WS <code>ws://localhost:8001/ws/percepcion</code> (buffer 64KB · 10 FPS · reconexión exponencial)</div>
+    <div class="percepcion-hint">pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED · WS <code>ws://localhost:8000/ws/percepcion</code> (buffer 64KB · 10 FPS · reconexión exponencial)</div>
   `;
   return panel;
 }
@@ -128,7 +128,7 @@ function initPercepcion() {
       }
       // Intenta backend voz si existe (ticket 004), fallback mock ya en voice-chat.js
       try {
-        const r = await fetch("http://localhost:8001/voz", {
+        const r = await fetch("http://localhost:8000/voz", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: text }),
@@ -187,7 +187,7 @@ function initPercepcion() {
   });
 
   wsClient = createPerceptionClient({
-    url: "ws://localhost:8001/ws/percepcion",
+    url: "ws://localhost:8000/ws/percepcion",
     onDetecciones: (payload, env) => {
       overlay.handleDetecciones(payload);
       try {
@@ -209,7 +209,21 @@ function initPercepcion() {
         enrollment.handleEstado(payload);
       } catch {}
     },
+    onEnrollAck: (payload) => {
+      try {
+        enrollment.handleEnrollAck(payload);
+      } catch {}
+    },
+    onPurgeAck: (payload) => {
+      try {
+        enrollment.handlePurgeAck(payload);
+      } catch {}
+    },
   });
+  // hibrido: wire WS a enrollment para pending_sync flush y direct send
+  try {
+    enrollment.setWsClient(wsClient);
+  } catch {}
 
   // monkey-patch onopen/onclose para dot
   const origConnect = wsClient.connect.bind(wsClient);
@@ -224,6 +238,9 @@ function initPercepcion() {
         dotEl.title = "WS conectado";
         stateEl.textContent = "conectado";
         stateEl.className = "chip mission-tag RUNNING";
+        try {
+          enrollment.flushPending();
+        } catch {}
         clearInterval(check);
       }
     }, 300);
