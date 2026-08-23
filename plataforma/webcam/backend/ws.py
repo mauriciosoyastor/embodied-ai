@@ -22,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast
 
+from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import (
     ALLOWED_LABELS,
     GestoReconocido,
@@ -29,11 +30,24 @@ from plataforma.webcam.backend.inference.gesture import (
 )
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
 
+# Global clients para broadcast purge (hibrido)
+connected_clients: set[WebSocketLike] = set()
+
 # ---------------------------------------------------------------------------
 # Tipos
 # ---------------------------------------------------------------------------
 
-EnvelopeType = Literal["frame", "detecciones", "gesto", "estado"]
+EnvelopeType = Literal[
+    "frame",
+    "detecciones",
+    "gesto",
+    "estado",
+    "enroll_sync",
+    "enroll_ack",
+    "purge",
+    "purge_ack",
+    "identities",
+]
 GestureLabelWs = Literal["open_palm", "fist", "thumbs_up", "none"]
 
 
@@ -74,7 +88,17 @@ def parse_envelope(raw: str) -> dict[str, Any]:
     if not has_keys:
         msg = f"Envelope incompleto: {data}"
         raise ValueError(msg)
-    if data["type"] not in ("frame", "detecciones", "gesto", "estado"):
+    if data["type"] not in (
+        "frame",
+        "detecciones",
+        "gesto",
+        "estado",
+        "enroll_sync",
+        "purge",
+        "enroll_ack",
+        "purge_ack",
+        "identities",
+    ):
         msg = f"Envelope type desconocido: {data['type']}"
         raise ValueError(msg)
     return data
@@ -220,6 +244,81 @@ def run_inference(
     return boxes_payload, gesto_payload
 
 
+async def handle_enroll_sync(
+    websocket: WebSocketLike,
+    payload: dict[str, Any],
+    seq_counter: list[int],
+) -> None:
+    """Guarda enroll_sync en store y responde enroll_ack (bypass LeakyQueue)."""
+    rid = str(payload.get("id") or "")
+    nombre = str(payload.get("nombre") or "").strip()
+    embedding = payload.get("embedding")
+    if not rid or not nombre or not isinstance(embedding, list):
+        # ack error
+        seq_counter[0] += 1
+        err = make_envelope(
+            "enroll_ack",
+            seq_counter[0],
+            {"id": rid, "status": "error", "reason": "payload invalido"},
+        )
+        try:
+            await websocket.send_text(json.dumps(err))
+        except Exception:
+            pass
+        return
+    try:
+        rec = await store.enroll({"id": rid, "nombre": nombre, "embedding": embedding})
+        seq_counter[0] += 1
+        ack = make_envelope(
+            "enroll_ack",
+            seq_counter[0],
+            {"id": rid, "status": "ok", "count": rec.get("count", 1)},
+        )
+        await websocket.send_text(json.dumps(ack))
+    except Exception as e:
+        seq_counter[0] += 1
+        err = make_envelope(
+            "enroll_ack",
+            seq_counter[0],
+            {"id": rid, "status": "error", "reason": str(e)},
+        )
+        try:
+            await websocket.send_text(json.dumps(err))
+        except Exception:
+            pass
+
+
+async def handle_purge(
+    websocket: WebSocketLike,
+    payload: dict[str, Any],
+    seq_counter: list[int],
+) -> None:
+    """Purge broadcast: limpia store y notifica a todos los clientes."""
+    all_ = bool(payload.get("all", False))
+    ids = payload.get("ids")
+    ids_list = [str(x) for x in ids] if isinstance(ids, list) else None
+    try:
+        n = await store.purge(all_=all_, ids=ids_list)
+        seq_counter[0] += 1
+        ack = make_envelope("purge_ack", seq_counter[0], {"n": n, "all": all_})
+        # broadcast a todos los conectados
+        for ws in list(connected_clients):
+            try:
+                await ws.send_text(json.dumps(ack))
+            except Exception:
+                pass
+        # si no hay broadcast (solo este ws), al menos responde
+        if not connected_clients:
+            await websocket.send_text(json.dumps(ack))
+    except Exception as e:
+        seq_counter[0] += 1
+        err = make_envelope("purge_ack", seq_counter[0], {"n": 0, "error": str(e)})
+        try:
+            await websocket.send_text(json.dumps(err))
+        except Exception:
+            pass
+
+
 async def process_single_frame(
     websocket: WebSocketLike,
     frame_payload: dict[str, Any],
@@ -267,12 +366,13 @@ async def process_single_frame(
 
 
 async def perception_ws_handler(websocket: WebSocketLike) -> None:
-    """Handler /ws/percepcion — loop con leaky queue N=1.
+    """Handler /ws/percepcion — loop con leaky queue N=1 + enroll_sync/purge bypass.
 
-    Acepta WS, recibe envelopes type=frame, aplica leaky queue y
-    responde detecciones+gesto por cada frame procesado.
+    Acepta WS, recibe envelopes, aplica leaky queue solo para frame,
+    y maneja enroll_sync/purge via branch paralelo (bypass N=1).
     """
     await websocket.accept()
+    connected_clients.add(websocket)
     seq_counter: list[int] = [0]
     queue: AsyncLeakyQueue[dict[str, Any]] = AsyncLeakyQueue(maxsize=1)
 
@@ -286,10 +386,18 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 env = parse_envelope(raw)
             except ValueError:
                 continue
-            if env["type"] != "frame":
-                continue
+            typ = env["type"]
             payload = env["payload"]
             if not isinstance(payload, dict):
+                continue
+            # Bypass LeakyQueue para control (Ticket 024)
+            if typ == "enroll_sync":
+                await handle_enroll_sync(websocket, payload, seq_counter)
+                continue
+            if typ == "purge":
+                await handle_purge(websocket, payload, seq_counter)
+                continue
+            if typ != "frame":
                 continue
             # Leaky: si llega nuevo antes de consumir, descarta anterior
             await queue.put(payload)
@@ -315,6 +423,7 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        connected_clients.discard(websocket)
         recv_task.cancel()
         proc_task.cancel()
         # best-effort cancel wait

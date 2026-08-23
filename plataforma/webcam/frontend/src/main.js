@@ -209,7 +209,21 @@ function initPercepcion() {
         enrollment.handleEstado(payload);
       } catch {}
     },
+    onEnrollAck: (payload) => {
+      try {
+        enrollment.handleEnrollAck(payload);
+      } catch {}
+    },
+    onPurgeAck: (payload) => {
+      try {
+        enrollment.handlePurgeAck(payload);
+      } catch {}
+    },
   });
+  // hibrido: wire WS a enrollment para pending_sync flush y direct send
+  try {
+    enrollment.setWsClient(wsClient);
+  } catch {}
 
   // monkey-patch onopen/onclose para dot
   const origConnect = wsClient.connect.bind(wsClient);
@@ -224,6 +238,9 @@ function initPercepcion() {
         dotEl.title = "WS conectado";
         stateEl.textContent = "conectado";
         stateEl.className = "chip mission-tag RUNNING";
+        try {
+          enrollment.flushPending();
+        } catch {}
         clearInterval(check);
       }
     }, 300);

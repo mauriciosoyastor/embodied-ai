@@ -23,7 +23,7 @@ export const MAX_FPS = 10;
 export const RECONNECT_INITIAL_MS = 500;
 export const RECONNECT_MAX_MS = 10000;
 
-export function createPerceptionClient({ url, onDetecciones, onGesto, onEstado } = {}) {
+export function createPerceptionClient({ url, onDetecciones, onGesto, onEstado, onEnrollAck, onPurgeAck } = {}) {
   const endpoint = url || "ws://localhost:8000/ws/percepcion";
   let ws = null;
   let seq = 0;
@@ -37,6 +37,8 @@ export function createPerceptionClient({ url, onDetecciones, onGesto, onEstado }
     onDetecciones: onDetecciones || (() => {}),
     onGesto: onGesto || (() => {}),
     onEstado: onEstado || (() => {}),
+    onEnrollAck: onEnrollAck || (() => {}),
+    onPurgeAck: onPurgeAck || (() => {}),
 
     connect() {
       // evitar doble connect
@@ -55,6 +57,8 @@ export function createPerceptionClient({ url, onDetecciones, onGesto, onEstado }
           if (env.type === "detecciones") client.onDetecciones(env.payload, env);
           else if (env.type === "gesto") client.onGesto(env.payload, env);
           else if (env.type === "estado") client.onEstado(env.payload, env);
+          else if (env.type === "enroll_ack") client.onEnrollAck(env.payload, env);
+          else if (env.type === "purge_ack") client.onPurgeAck(env.payload, env);
         } catch (e) {
           console.warn("[ws-client] parse error", e);
         }

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 
+from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import get_gesture_recognizer
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
 from plataforma.webcam.backend.ws import perception_ws_handler
@@ -39,6 +40,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Gesture stub activo — model ausente (lazy)")
         else:
             logger.info("Gesture cargado: %s", gesture.model_path)
+        # Hidratar identities.json (hibrido)
+        ids = await store.load()
+        logger.info("Identities cargadas: %d", len(ids))
     except Exception as exc:  # pragma: no cover
         logger.warning("Lifespan init falló (stub fallback): %s", exc)
     yield
@@ -52,6 +56,12 @@ app = FastAPI(title="webcam-backend", version="0.1.0", lifespan=lifespan)
 async def health() -> dict[str, str]:
     """Healthcheck simple."""
     return {"status": "ok"}
+
+
+@app.get("/identities")
+async def list_identities() -> list[dict[str, object]]:
+    """Snapshot hibrido para hidratación inicial (Ticket 025)."""
+    return await store.get_all()
 
 
 @app.post("/voz")

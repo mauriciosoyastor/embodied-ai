@@ -6,6 +6,7 @@
 import { createFaceEmbedder, isValidNombre, COSINE_THRESHOLD } from "./face-embedding.js";
 
 const STORAGE_KEY = "webcam.identities";
+const STORAGE_PENDING = "webcam.pending_sync";
 const THUMBS_N = 5;
 const GRACE_FRAMES = 3;
 
@@ -22,13 +23,77 @@ function loadGallery() {
 function saveGallery(arr) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
 }
+function loadPending() {
+  try {
+    const raw = localStorage.getItem(STORAGE_PENDING);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+function savePending(arr) {
+  localStorage.setItem(STORAGE_PENDING, JSON.stringify(arr));
+}
 function nanoid() {
   return Math.random().toString(36).slice(2, 9);
 }
+async function hydrateFromServer() {
+  try {
+    const r = await fetch("http://localhost:8000/identities");
+    if (!r.ok) return;
+    const server = await r.json();
+    if (!Array.isArray(server) || server.length === 0) return;
+    const local = loadGallery();
+    const localIds = new Set(local.map((x) => x.id));
+    let added = 0;
+    for (const s of server) {
+      if (!localIds.has(s.id)) {
+        local.push(s);
+        added++;
+      }
+    }
+    if (added) {
+      saveGallery(local);
+    }
+  } catch {}
+}
 
-export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll } = {}) {
+export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } = {}) {
   let videoRef = videoEl;
+  let wsRef = wsClient || null;
   const embedder = createFaceEmbedder();
+  // hidratacion hibrida al iniciar (GET /identities snapshot)
+  hydrateFromServer().then(() => renderGallery());
+
+  function wsSendEnrollSync(rec) {
+    const payload = { id: rec.id, nombre: rec.nombre, embedding: rec.embedding, ts: rec.ts };
+    // intentar WS directo (bypass LeakyQueue)
+    try {
+      if (wsRef && wsRef.ws && wsRef.ws.readyState === WebSocket.OPEN) {
+        const seq = (wsRef.seq || 0) + 1;
+        // usar formato envelope D5 para ws.py parse_envelope
+        const env = { type: "enroll_sync", seq, ts: Date.now(), payload };
+        wsRef.ws.send(JSON.stringify(env));
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+  function flushPending() {
+    const pending = loadPending();
+    if (!pending.length || !wsRef || !wsRef.ws || wsRef.ws.readyState !== WebSocket.OPEN) return;
+    for (const p of pending) {
+      try {
+        const seq = (wsRef.seq || 0) + 1;
+        const env = { type: "enroll_sync", seq, ts: Date.now(), payload: p };
+        wsRef.ws.send(JSON.stringify(env));
+      } catch {}
+    }
+    savePending([]);
+    setHint(`Sincronizado ${pending.length} pendiente → server`, "#22c55e");
+  }
 
   // state
   let lastBoxes = [];
@@ -111,7 +176,17 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll } = {}) {
         const id = b.getAttribute("data-del");
         const next = loadGallery().filter((x) => x.id !== id);
         saveGallery(next);
+        // limpiar pending si existia
+        const pend = loadPending().filter((x) => x.id !== id);
+        savePending(pend);
         renderGallery();
+        // purge single id via WS
+        try {
+          if (wsRef && wsRef.ws && wsRef.ws.readyState === WebSocket.OPEN) {
+            const env = { type: "purge", seq: (wsRef.seq || 0) + 1, ts: Date.now(), payload: { ids: [id] } };
+            wsRef.ws.send(JSON.stringify(env));
+          }
+        } catch {}
         setHint(`Borrado ${id}`, "#f87171");
       });
     });
@@ -166,10 +241,24 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll } = {}) {
   });
 
   clearBtn?.addEventListener("click", () => {
-    if (!confirm("¿Borrar todos los registros locales?")) return;
+    if (!confirm("¿Borrar todos? Limpiará localStorage + identities.json en todos los clientes (purge broadcast).")) return;
+    const n = loadGallery().length;
     saveGallery([]);
+    savePending([]);
     renderGallery();
-    setHint("Galería borrada.", "#f87171");
+    // purge broadcast via WS (bypass LeakyQueue)
+    try {
+      if (wsRef && wsRef.ws && wsRef.ws.readyState === WebSocket.OPEN) {
+        const env = { type: "purge", seq: (wsRef.seq || 0) + 1, ts: Date.now(), payload: { all: true } };
+        wsRef.ws.send(JSON.stringify(env));
+        setHint(`Purge {all:true} enviado (${n} borrados)`, "#f87171");
+      } else {
+        // offline: solo local, pending purge se manejara en reconnect
+        setHint(`Galería borrada local (${n}) — WS offline, purge pendiente`, "#fbbf24");
+      }
+    } catch {
+      setHint("Galería borrada local.", "#f87171");
+    }
   });
 
   function selectPerson(boxes) {
@@ -279,9 +368,18 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll } = {}) {
     gal.push(rec);
     saveGallery(gal);
     renderGallery();
+    // hibrido: intentar sync server (bypass LeakyQueue)
+    const sent = wsSendEnrollSync(rec);
+    if (!sent) {
+      const pending = loadPending();
+      pending.push({ id: rec.id, nombre: rec.nombre, embedding: rec.embedding, ts: rec.ts });
+      savePending(pending);
+      setHint(`Registrado local + pendiente sync (${pending.length}) — reconectando`, "#fbbf24");
+    } else {
+      setHint(`Registrado ${nombre} ✓ (sync server)`, "#22c55e");
+    }
     thumbsCount = 0;
     progressEl.textContent = `0/${THUMBS_N}`;
-    setHint(`Registrado ${nombre} ✓ (${gal.length} en galería)`, "#22c55e");
     nombreInput.value = "";
     evaluate();
     if (typeof onEnroll === "function") onEnroll(rec);
@@ -369,6 +467,33 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll } = {}) {
     evaluate,
     setVideoEl(v) {
       videoRef = v;
+    },
+    setWsClient(ws) {
+      wsRef = ws;
+      // si WS se abre, flush pending
+      try {
+        if (ws && ws.ws) {
+          const prevOpen = ws.ws.onopen;
+          // flush inmediato si ya OPEN
+          if (ws.ws.readyState === WebSocket.OPEN) flushPending();
+        }
+      } catch {}
+    },
+    flushPending,
+    getPending: loadPending,
+    handleEnrollAck(payload) {
+      if (payload?.status === "ok") {
+        // remover del pending si existia
+        const pend = loadPending().filter((x) => x.id !== payload.id);
+        savePending(pend);
+        setHint(`Sync ok ${payload.id.slice(0,4)} (count ${payload.count || 1})`, "#22c55e");
+      }
+    },
+    handlePurgeAck(payload) {
+      saveGallery([]);
+      savePending([]);
+      renderGallery();
+      setHint(`Purge ack: ${payload?.n || 0} borrados (broadcast)`, "#f87171");
     },
     _embedder: embedder,
   };
