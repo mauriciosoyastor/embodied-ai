@@ -143,7 +143,7 @@ function initPercepcion() {
     },
   });
   percepcion.appendChild(voice.element);
-  // Enrollment facial — Ticket 005 grilling (consent localStorage, N=5)
+  // Enrollment facial — Ticket 005 grilling (consent localStorage, N=5) + 036 visión viva
   const enrollment = createEnrollmentPanel({
     videoEl: null, // se asigna tras crear video
     canvasEl: null,
@@ -151,6 +151,12 @@ function initPercepcion() {
       // feedback voz al registrar
       try {
         voice.addBotMessage?.(`¡Registrado ${rec.nombre}! Quedaste en galería local (${rec.id.slice(0,4)}).`);
+      } catch {}
+    },
+    onIdentidades: (whiteboardIds) => {
+      // 034: overlay badges Variante A + Whiteboard last_identidades client-side
+      try {
+        overlay.handleIdentidades(whiteboardIds);
       } catch {}
     },
   });

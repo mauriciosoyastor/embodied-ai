@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PROTOTYPE — Visión Viva ReID (throwaway 035)</title>
+<style>
+:root{--bg:#020617;--card:#0f172a;--line:#1e293b;--txt:#e2e8f0;--muted:#94a3b8;--ok:#22c55e;--warn:#f59e0b;--bad:#f87171;--info:#38bdf8}
+*{box-sizing:border-box}body{margin:0;font-family:ui-sans,system-ui,Segoe UI,Roboto;color:var(--txt);background:#020617}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+header b{color:#fbbf24}
+.wrap{display:grid;grid-template-columns:1.4fr 340px;gap:14px;padding:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
+.canvas-wrap{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:640/480}
+canvas{position:absolute;inset:0;width:100%;height:100%}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.controls button, .controls select{padding:6px 10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #334155}
+.chip.ok{background:#052e16;border-color:#14532d;color:#86efac}
+.chip.warn{background:#422006;border-color:#92400e;color:#fde68a}
+.chip.bad{background:#450a0a;border-color:#7f1d1d;color:#fecaca}
+.chip.neutral{background:#1e293b;color:#cbd5e1}
+.state{font-family:ui-monospace,monospace;font-size:11px;white-space:pre-wrap;background:#020617;border:1px solid #1e293b;border-radius:8px;padding:8px;max-height:280px;overflow:auto}
+.variant-bar{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:8px;background:#0f172a;border:1px solid #1e293b;border-radius:999px;padding:6px 8px;z-index:99}
+.variant-bar button{padding:6px 14px;border-radius:999px;border:1px solid #334155;background:#020617;color:#e2e8f0;cursor:pointer}
+.variant-bar button.active{background:#38bdf8;color:#020617;border-color:#38bdf8;font-weight:700}
+.badge-box{position:absolute;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:700;line-height:1}
+.traj{position:absolute;inset:0;pointer-events:none}
+.hint{color:var(--muted);font-size:11px;line-height:1.4}
+</style>
+</head>
+<body>
+<header>
+  <div><b>PROTOTYPE THROWAWAY — TICKET 035</b> · Visión viva overlay ReID · <span style="color:var(--muted)">no plegar a prod; rama <code>prototype/035-vision-viva</code></span></div>
+  <div class="chip neutral" id="fpsChip">fps — · infer — · N=3 grace2 · IoU 0.5 edad5 · 10FPS</div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b id="variantTitle">Variante A — Badge dentro del box</b>
+      <span class="chip neutral" id="modeChip">client-side ReID · BlazeFace 0.2MB + mobilefacenet 0.42</span>
+    </div>
+    <div class="canvas-wrap" id="stage">
+      <canvas id="videoMock" width="640" height="480"></canvas>
+      <canvas id="boxes" width="640" height="480"></canvas>
+      <canvas id="traj" width="640" height="480" class="traj"></canvas>
+      <div id="overlayDom" style="position:absolute;inset:0;pointer-events:none"></div>
+    </div>
+    <div class="controls">
+      <button id="btnMock">Mock: 1 conocida Ana (0.91)</button>
+      <button id="btnMulti">Mock: 3 (Ana 0.31 / Bob? 0.48 / desconocido)</button>
+      <button id="btnOcclusion">Mock: oclusión (face null)</button>
+      <button id="btnAborted">Toggle ABORTED latch</button>
+      <button id="btnEnroll">Simular enroll Ana (thumbs N=5)</button>
+      <select id="latencySel" title="latency preset"><option value="75">lat 75ms desktop</option><option value="110">lat 110ms MotoG5</option><option value="190">lat 190ms limite</option></select>
+    </div>
+    <div class="hint">
+      Híbrido cada 3 frames + IoU&lt;0.7 · Zona gris 0.42–0.55: &lt;0.42 verde firme a Whiteboard, 0.42–0.55 amarillo solo overlay, &gt;0.55 gris. Histéresis N=3 grace2. Tracker IoU greedy &gt;0.5 edad 5. <br />
+      <b>Variante A:</b> badge pegado al box (top-left), trayectoria IoU por persona. <b>Variante B:</b> chips fuera del canvas (barra superior) + boxes solo clase `person`.
+    </div>
+  </div>
+
+  <div class="card">
+    <b>Galería (loadGallery hidratada GET /identities)</b>
+    <div id="gallery" style="margin:6px 0;font-size:12px"></div>
+    <b>Identidades vivas (last_identidades Whiteboard)</b>
+    <div id="live" style="margin:6px 0"></div>
+    <b>Estado vivo (surface the state)</b>
+    <div id="state" class="state">—</div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button id="btnFlush" style="flex:1;padding:6px;border-radius:8px;border:1px solid #334155;background:#020617;color:#e2e8f0;cursor:pointer">Flush pending_sync (sim)</button>
+      <span class="chip neutral" id="pendingChip">pending 0</span>
+    </div>
+    <div class="hint" style="margin-top:8px">
+      Simula `enrollment-panel.js:42 hydrateFromServer` · `enroll_sync bypass N=1` · `face-embedding.js:70` · `N=3` histéresis no pisa `ABORTED`.
+    </div>
+  </div>
+</div>
+
+<div class="variant-bar">
+  <button id="vA" class="active">Variante A — Badge-box</button>
+  <button id="vB">Variante B — Chip-list</button>
+  <span style="align-self:center;color:#64748b;font-size:11px;margin-left:6px">?variant=a|b</span>
+</div>
+
+<script type="module">
+const qs = new URLSearchParams(location.search);
+let variant = qs.get('variant') || 'a';
+const gallerySeed = [
+  {id:'a1b2c3d4', nombre:'Ana', embedding:'stub:ana|0.1', count:3, updatedAt:new Date().toISOString()},
+  {id:'e5f6g7h8', nombre:'Bob', embedding:'stub:bob|0.2', count:1, updatedAt:new Date().toISOString()},
+];
+let liveIdentities = [];
+let tracks = new Map(); // id-> {box, age}
+let hyst = new Map(); // key nombre -> {count,grace}
+let aborted = false;
+let pending = 0;
+let frameId = 0;
+
+const videoMock = document.getElementById('videoMock');
+const boxes = document.getElementById('boxes');
+const traj = document.getElementById('traj');
+const overlayDom = document.getElementById('overlayDom');
+const vCtx = videoMock.getContext('2d');
+const bCtx = boxes.getContext('2d');
+const tCtx = traj.getContext('2d');
+
+function drawVideoMock(){
+  vCtx.fillStyle='#0b1220';
+  vCtx.fillRect(0,0,640,480);
+  // grid
+  vCtx.strokeStyle='rgba(148,163,184,0.08)';
+  for(let x=0;x<640;x+=40){ vCtx.beginPath(); vCtx.moveTo(x,0); vCtx.lineTo(x,480); vCtx.stroke(); }
+  for(let y=0;y<480;y+=40){ vCtx.beginPath(); vCtx.moveTo(0,y); vCtx.lineTo(640,y); vCtx.stroke(); }
+  vCtx.fillStyle='rgba(56,189,248,0.06)';
+  vCtx.fillRect(40,40,560,400);
+  vCtx.fillStyle='#64748b';
+  vCtx.font='12px ui-monospace';
+  vCtx.fillText('mock 640×480 · BlazeFace 15ms + mobilefacenet 32/3 · client-side ReID', 48, 32);
+}
+function clearOverlays(){
+  bCtx.clearRect(0,0,640,480);
+  tCtx.clearRect(0,0,640,480);
+  overlayDom.innerHTML='';
+}
+
+function cosineFake(seedA, seedB){
+  // stub: ana vs ana -> 0.31, ana vs bob -> 0.48, unknown -> 0.62
+  if(seedA===seedB) return 0.31;
+  if(seedA.includes('ana') && seedB.includes('bob')) return 0.48;
+  if(seedB.includes('unknown')) return 0.62;
+  return 0.45;
+}
+
+function iou(a,b){
+  const x1=Math.max(a.x,b.x), y1=Math.max(a.y,b.y), x2=Math.min(a.x+a.w,b.x+b.w), y2=Math.min(a.y+a.h,b.y+b.h);
+  if(x2<=x1||y2<=y1) return 0;
+  const inter=(x2-x1)*(y2-y1), uni=a.w*a.h + b.w*b.h - inter;
+  return inter/uni;
+}
+
+function upsertTracks(detections){
+  // detections: [{idTmp, box}]
+  const next = new Map();
+  for(const d of detections){
+    let bestId=null, bestIoU=0;
+    for(const [tid, tr] of tracks){
+      const io=iou(d.box, tr.box);
+      if(io>bestIoU){ bestIoU=io; bestId=tid; }
+    }
+    const id = (bestIoU>0.5 && bestId) ? bestId : d.idTmp;
+    const prev = tracks.get(id);
+    const age = prev && bestIoU>0.5 ? 0 : 0;
+    // keep traj
+    if(prev && prev.traj) d.traj = [...prev.traj, {x:d.box.x+d.box.w/2, y:d.box.y+d.box.h/2}].slice(-12);
+    else d.traj = [{x:d.box.x+d.box.w/2, y:d.box.y+d.box.h/2}];
+    next.set(id, {box:d.box, age:0, traj:d.traj, nombre:d.nombre, cosine:d.cosine, estado:d.estado});
+  }
+  // age existing not matched
+  for(const [tid,tr] of tracks){
+    if(!next.has(tid)){
+      const age = (tr.age||0)+1;
+      if(age<5) next.set(tid, {...tr, age});
+    }
+  }
+  tracks = next;
+}
+
+function applyHysteresis(name, cosine){
+  const key=name||'unknown';
+  const entry = hyst.get(key) || {count:0,grace:0};
+  const isMatch = cosine < 0.42;
+  if(isMatch){ entry.count+=1; entry.grace=0; }
+  else { if(entry.count>0){ entry.grace+=1; if(entry.grace>2){ entry.count=0; entry.grace=0; } } }
+  hyst.set(key, entry);
+  return entry.count >=3;
+}
+
+function renderVariantA(identities){
+  // badges inside box
+  overlayDom.innerHTML='';
+  for(const it of identities){
+    const x = Math.round(it.box.x*640), y = Math.round(it.box.y*480), w = Math.round(it.box.w*640), h = Math.round(it.box.h*480);
+    // box
+    bCtx.strokeStyle = it.estado==='confirmado' ? '#22c55e' : it.estado==='posible' ? '#f59e0b' : '#64748b';
+    bCtx.lineWidth=2; bCtx.strokeRect(x,y,w,h);
+    // badge
+    const el=document.createElement('div');
+    el.className='badge-box';
+    el.style.left = x+'px'; el.style.top = (y-18)+'px';
+    const txt = it.estado==='confirmado' ? `Hola ${it.nombre} ✓ ${it.cosine.toFixed(2)}` : it.estado==='posible' ? `posible ${it.nombre}? ${it.cosine.toFixed(2)}` : `desconocido ${it.cosine.toFixed(2)}`;
+    el.style.background = it.estado==='confirmado' ? '#052e16' : it.estado==='posible' ? '#422006' : '#1e293b';
+    el.style.color = it.estado==='confirmado' ? '#86efac' : it.estado==='posible' ? '#fde68a' : '#cbd5e1';
+    el.style.border='1px solid '+(it.estado==='confirmado'?'#14532d':it.estado==='posible'?'#92400e':'#334155');
+    el.textContent=txt;
+    overlayDom.appendChild(el);
+    // traj
+    const tr = tracks.get(it.id);
+    if(tr && tr.traj && tr.traj.length>1){
+      tCtx.strokeStyle = it.estado==='confirmado' ? 'rgba(34,197,94,0.6)' : 'rgba(148,163,184,0.4)';
+      tCtx.lineWidth=2; tCtx.beginPath();
+      tr.traj.forEach((p,i)=>{ const px=p.x*640, py=p.y*480; if(i===0) tCtx.moveTo(px,py); else tCtx.lineTo(px,py); });
+      tCtx.stroke();
+    }
+  }
+}
+
+function renderVariantB(identities){
+  overlayDom.innerHTML='';
+  const bar=document.createElement('div');
+  bar.style.cssText='position:absolute;top:6px;left:6px;right:6px;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none';
+  for(const it of identities){
+    const chip=document.createElement('span');
+    chip.className='chip '+(it.estado==='confirmado'?'ok':it.estado==='posible'?'warn':'bad');
+    chip.textContent = it.estado==='confirmado' ? `Hola ${it.nombre} ✓` : it.estado==='posible' ? `posible ${it.nombre}?` : `desconocido`;
+    chip.title=`cos ${it.cosine.toFixed(2)} · ${it.box.w.toFixed(2)}×${it.box.h.toFixed(2)}`;
+    bar.appendChild(chip);
+  }
+  overlayDom.appendChild(bar);
+  for(const it of identities){
+    const x = Math.round(it.box.x*640), y = Math.round(it.box.y*480), w = Math.round(it.box.w*640), h = Math.round(it.box.h*480);
+    bCtx.strokeStyle='rgba(226,232,240,0.85)'; bCtx.lineWidth=2; bCtx.strokeRect(x,y,w,h);
+    bCtx.fillStyle='rgba(15,23,42,0.7)'; bCtx.fillRect(x, y+h-14, 90, 14);
+    bCtx.fillStyle='#e2e8f0'; bCtx.font='10px ui-monospace'; bCtx.fillText(`person ${(it.conf||0.92).toFixed(2)}`, x+4, y+h-4);
+  }
+}
+
+function surface(){
+  const s = {
+    variant: variant==='a'?'A badge-box':'B chip-list',
+    frame_id: frameId,
+    aborted,
+    gallery: gallerySeed.map(g=>({id:g.id.slice(0,4), nombre:g.nombre, count:g.count})),
+    last_identidades: liveIdentities,
+    hyst: Object.fromEntries(hyst),
+    tracks: [...tracks.entries()].map(([id,tr])=>({id:id.slice(0,4), age:tr.age, trajLen:tr.traj?.length||0})),
+    pending_sync: pending,
+    budget: 'BlazeFace 15ms + mobilefacenet 32/3 + YOLO 35ms + RTT 25ms = ~107ms <200ms · MAX_FPS 10 Leaky N=1',
+    contract: 'WhiteboardState.last_identidades list 0-3 client-side, detecciones.identities optional, no LeakyQueue'
+  };
+  document.getElementById('state').textContent = JSON.stringify(s, null, 2);
+  document.getElementById('pendingChip').textContent = `pending ${pending}`;
+  document.getElementById('gallery').innerHTML = gallerySeed.map(g=>`<div class="chip neutral" style="margin:2px">👤 ${g.nombre} · ${g.id.slice(0,4)} · count ${g.count}</div>`).join('');
+  document.getElementById('live').innerHTML = liveIdentities.length? liveIdentities.map(it=>`<div class="chip ${it.estado==='confirmado'?'ok':it.estado==='posible'?'warn':'bad'}" style="margin:2px">${it.estado==='confirmado'?'Hola':it.estado==='posible'?'posible':'?'} ${it.nombre} · cos ${it.cosine.toFixed(2)} · ${it.estado}</div>`).join('') : '<span class="chip neutral">sin identidades (N=3 no confirmado)</span>';
+  document.getElementById('fpsChip').textContent = `fps 10 · infer ${document.getElementById('latencySel').value}ms · N=3 grace2 · IoU 0.5 edad5 · ${aborted?'ABORTED overlay-only':'RUNNING'}`;
+}
+
+function applySet(identitiesRaw){
+  // identitiesRaw: [{nombre, cosine, box, conf}]
+  const filtered = identitiesRaw.map((r,i)=>{
+    const confirmed = applyHysteresis(r.nombre, r.cosine);
+    const estado = r.cosine <0.42 ? (confirmed?'confirmado':'posible') : r.cosine<=0.55 ? 'posible' : 'desconocido';
+    const id = gallerySeed.find(g=>g.nombre===r.nombre)?.id || `unk_${i}`;
+    return {...r, id, estado, cosine:r.cosine, conf:r.conf||0.92};
+  });
+  // whiteboard ABORTED: no muta, pero overlay sí
+  if(!aborted) liveIdentities = filtered;
+  // still overlay shows filtered even if aborted (overlay-only)
+  const overlayIds = filtered;
+  upsertTracks(overlayIds.map(o=>({idTmp:o.id, box:o.box, nombre:o.nombre, cosine:o.cosine, estado:o.estado, conf:o.conf})));
+  frameId +=3; // hybrid step
+  clearOverlays();
+  if(variant==='a') renderVariantA(overlayIds);
+  else renderVariantB(overlayIds);
+  surface();
+}
+
+function setVariant(v){
+  variant=v;
+  qs.set('variant', v);
+  history.replaceState({},'', location.pathname+'?'+qs.toString());
+  document.getElementById('vA').classList.toggle('active', v==='a');
+  document.getElementById('vB').classList.toggle('active', v==='b');
+  document.getElementById('variantTitle').textContent = v==='a' ? 'Variante A — Badge dentro del box' : 'Variante B — Chip-list fuera';
+  // re-render last
+  clearOverlays();
+  const ids = liveIdentities.length? liveIdentities : [{id:'a1b2c3d4', nombre:'Ana', cosine:0.31, box:{x:0.28,y:0.22,w:0.22,h:0.45}, conf:0.92, estado:'confirmado'}];
+  // use cached overlay
+  const cached = liveIdentities.length? liveIdentities : ids;
+  if(variant==='a') renderVariantA(cached); else renderVariantB(cached);
+}
+
+document.getElementById('vA').onclick=()=>setVariant('a');
+document.getElementById('vB').onclick=()=>setVariant('b');
+setVariant(variant);
+
+drawVideoMock();
+surface();
+// initial mock
+document.getElementById('btnMock').onclick=()=>{
+  // Ana confirmada
+  hyst.clear();
+  // 3 hits to confirm
+  applySet([{nombre:'Ana', cosine:0.31, box:{x:0.28,y:0.22,w:0.22,h:0.45}}]);
+  setTimeout(()=>applySet([{nombre:'Ana', cosine:0.30, box:{x:0.29,y:0.22,w:0.22,h:0.45}}]),120);
+  setTimeout(()=>applySet([{nombre:'Ana', cosine:0.32, box:{x:0.30,y:0.23,w:0.22,h:0.45}}]),240);
+};
+document.getElementById('btnMulti').onclick=()=>{
+  hyst.clear();
+  applySet([
+    {nombre:'Ana', cosine:0.31, box:{x:0.12,y:0.25,w:0.18,h:0.38}},
+    {nombre:'Bob', cosine:0.48, box:{x:0.42,y:0.28,w:0.16,h:0.34}},
+    {nombre:'unknown', cosine:0.62, box:{x:0.66,y:0.30,w:0.17,h:0.36}},
+  ]);
+  setTimeout(()=>applySet([
+    {nombre:'Ana', cosine:0.31, box:{x:0.13,y:0.25,w:0.18,h:0.38}},
+    {nombre:'Bob', cosine:0.48, box:{x:0.43,y:0.28,w:0.16,h:0.34}},
+    {nombre:'unknown', cosine:0.62, box:{x:0.67,y:0.30,w:0.17,h:0.36}},
+  ]),150);
+  setTimeout(()=>applySet([
+    {nombre:'Ana', cosine:0.32, box:{x:0.14,y:0.25,w:0.18,h:0.38}},
+    {nombre:'Bob', cosine:0.49, box:{x:0.44,y:0.28,w:0.16,h:0.34}},
+    {nombre:'unknown', cosine:0.61, box:{x:0.68,y:0.30,w:0.17,h:0.36}},
+  ]),300);
+};
+document.getElementById('btnOcclusion').onclick=()=>{
+  clearOverlays(); bCtx.strokeStyle='#f59e0b'; bCtx.strokeRect(180,120,140,200);
+  bCtx.fillStyle='rgba(245,158,11,0.12)'; bCtx.fillRect(180,120,140,200);
+  document.getElementById('state').textContent = JSON.stringify({frame_id:frameId, blockReason:'oclusión face null — acercá rostro bien iluminado', persons:[{x:0.28,y:0.25,w:0.22,h:0.42,cls:'person',conf:0.71}], consent:true, whiteboard_last_identidades: liveIdentities}, null, 2);
+  // no embed, hyst reset
+  hyst.clear();
+};
+document.getElementById('btnAborted').onclick=()=>{
+  aborted=!aborted;
+  document.getElementById('btnAborted').textContent = aborted?'ABORTED latch (overlay-only)':'Toggle ABORTED latch';
+  surface();
+  // try to apply one more — whiteboard should not mutate if aborted
+  applySet([{nombre:'Ana', cosine:0.31, box:{x:0.28,y:0.22,w:0.22,h:0.45}}]);
+};
+document.getElementById('btnEnroll').onclick=()=>{
+  pending+=1; surface();
+  setTimeout(()=>{ pending=Math.max(0,pending-1); surface(); }, 900);
+};
+document.getElementById('btnFlush').onclick=()=>{ pending=0; surface(); };
+document.getElementById('latencySel').onchange=surface;
+
+// auto initial
+drawVideoMock();
+</script>
+</body>
+</html>

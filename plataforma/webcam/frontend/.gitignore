@@ -1,2 +1,7 @@
 node_modules/
 dist/
+# modelos binarios visión viva (036) — nunca commitear pesos
+public/models/*.onnx
+public/models/*.tflite
+public/wasm/
+frontend.log

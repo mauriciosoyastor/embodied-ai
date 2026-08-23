@@ -3,12 +3,20 @@
  * YOLO person>0.6 & area>15% → face proxy → ArcFace 128-d → thumbs_up N=5 → localStorage.
  * Bloquea si multi-person, oclusión, ABORTED, sin consent, sin nombre.
  */
-import { createFaceEmbedder, isValidNombre, COSINE_THRESHOLD } from "./face-embedding.js";
+import { createFaceEmbedder, isValidNombre, COSINE_THRESHOLD, COSINE_GRAY, cosineDistance } from "./face-embedding.js";
+import { createFaceDetector } from "./face-detector.js";
 
 const STORAGE_KEY = "webcam.identities";
 const STORAGE_PENDING = "webcam.pending_sync";
 const THUMBS_N = 5;
 const GRACE_FRAMES = 3;
+// 033/034 visión viva
+const REID_N = 3;
+const REID_GRACE = 2;
+const REID_EVERY = 3; // cada 3 frames hybrid
+const IOU_TRIG = 0.7;
+const IOU_TRACK = 0.5;
+const TRACK_AGE = 5;
 
 function loadGallery() {
   try {
@@ -60,12 +68,22 @@ async function hydrateFromServer() {
   } catch {}
 }
 
-export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } = {}) {
+export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient, onIdentidades } = {}) {
   let videoRef = videoEl;
   let wsRef = wsClient || null;
   const embedder = createFaceEmbedder();
+  const faceDetector = createFaceDetector();
+  // re-id viva state 033/034
+  let reIdCounter = 0;
+  let lastBoxesForIoU = [];
+  let tracker = new Map(); // id -> {box, face_box, age, traj: [{x,y}]}
+  let reIdHyst = new Map(); // nombre -> {count,grace}
+  let lastIdentidades = [];
+  let onIdentidadesCb = typeof onIdentidades === "function" ? onIdentidades : null;
   // hidratacion hibrida al iniciar (GET /identities snapshot)
   hydrateFromServer().then(() => renderGallery());
+  // init face detector async (no bloquea)
+  faceDetector.init().catch(() => {});
 
   function wsSendEnrollSync(rec) {
     const payload = { id: rec.id, nombre: rec.nombre, embedding: rec.embedding, ts: rec.ts };
@@ -281,6 +299,179 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } 
     };
   }
 
+  // 033 visión viva helpers
+  function iou(a, b) {
+    const x1 = Math.max(a.x, b.x);
+    const y1 = Math.max(a.y, b.y);
+    const x2 = Math.min(a.x + a.w, b.x + b.w);
+    const y2 = Math.min(a.y + a.h, b.y + b.h);
+    if (x2 <= x1 || y2 <= y1) return 0;
+    const inter = (x2 - x1) * (y2 - y1);
+    const uni = a.w * a.h + b.w * b.h - inter;
+    return uni > 0 ? inter / uni : 0;
+  }
+  function getFaceBox(person) {
+    // intenta BlazeFace real, fallback mock
+    try {
+      const v = videoRef;
+      if (v && !faceDetector.isStub) {
+        const fb = faceDetector.detect(v, performance.now());
+        if (fb && fb.conf > 0.5) return fb;
+      }
+    } catch {}
+    return mockFaceFromPerson(person);
+  }
+  function shouldEmbed(boxes) {
+    reIdCounter += 1;
+    if (reIdCounter % REID_EVERY === 0) return true;
+    if (lastBoxesForIoU.length === 0) return true;
+    // trigger si alguna box IoU <0.7 vs prev
+    for (const cur of boxes) {
+      let best = 0;
+      for (const prev of lastBoxesForIoU) best = Math.max(best, iou(cur, prev));
+      if (best < IOU_TRIG) return true;
+    }
+    return false;
+  }
+  async function findBestMatch(embedding) {
+    const gal = loadGallery();
+    if (gal.length === 0 || !embedding) return null;
+    let best = null;
+    let bestDist = 2;
+    for (const rec of gal) {
+      const emb = rec.embedding;
+      if (!Array.isArray(emb) || emb.length !== 128) continue;
+      const d = cosineDistance(embedding, new Float32Array(emb));
+      if (d < bestDist) {
+        bestDist = d;
+        best = rec;
+      }
+    }
+    if (best === null) return null;
+    return { rec: best, dist: bestDist };
+  }
+  function trackIdentities(identities) {
+    // IoU greedy tracker edad 5, traj hasta 12
+    const next = new Map();
+    for (const it of identities) {
+      const box = it.box;
+      if (!box) continue;
+      let bestId = null;
+      let bestIoU = 0;
+      for (const [tid, tr] of tracker) {
+        const io = iou(box, tr.box);
+        if (io > bestIoU) {
+          bestIoU = io;
+          bestId = tid;
+        }
+      }
+      const useId = bestIoU > IOU_TRACK && bestId ? bestId : it.id;
+      const prev = tracker.get(useId);
+      let traj = prev?.traj ? [...prev.traj] : [];
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      traj.push({ x: cx, y: cy });
+      if (traj.length > 12) traj = traj.slice(-12);
+      next.set(useId, { box, face_box: it.face_box, age: 0, traj, nombre: it.nombre, estado: it.estado });
+    }
+    for (const [tid, tr] of tracker) {
+      if (!next.has(tid)) {
+        const age = (tr.age || 0) + 1;
+        if (age < TRACK_AGE) next.set(tid, { ...tr, age });
+      }
+    }
+    tracker = next;
+  }
+  async function runReId(persons) {
+    // persons: array selectPerson (hasta 3)
+    if (persons.length === 0) {
+      lastIdentidades = [];
+      if (onIdentidadesCb) try { onIdentidadesCb([]); } catch {}
+      return [];
+    }
+    if (!shouldEmbed(persons)) {
+      // no recalcular, mantener lastIdentidades pero actualizar tracker edades
+      trackIdentities(lastIdentidades);
+      return lastIdentidades;
+    }
+    lastBoxesForIoU = persons.map((p) => ({ ...p }));
+    const out = [];
+    const limited = persons.slice(0, 3);
+    const firmSeen = new Set(); // nombres con match firme <0.42 este frame
+    for (const p of limited) {
+      const face = getFaceBox(p);
+      if (!face) continue;
+      let embedding = null;
+      try {
+        const v = videoRef;
+        if (v && v.videoWidth) {
+          const off = document.createElement("canvas");
+          off.width = 112; off.height = 112;
+          const ctx = off.getContext("2d");
+          if (ctx) {
+            const px = face.x * (v.videoWidth || 640);
+            const py = face.y * (v.videoHeight || 480);
+            const pw = face.w * (v.videoWidth || 640);
+            const ph = face.h * (v.videoHeight || 480);
+            ctx.drawImage(v, px, py, pw, ph, 0, 0, 112, 112);
+            embedding = await embedder.embed(off, `reid:${p.x.toFixed(3)}:${Date.now()}`);
+          }
+        }
+      } catch {}
+      if (!embedding) embedding = await embedder.embed({ width: 112, height: 112 }, `reid:stub:${p.x.toFixed(3)}`);
+      const match = await findBestMatch(embedding);
+      let nombre = "desconocido";
+      let id = `unk_${p.x.toFixed(3)}`;
+      let dist = match ? match.dist : 2;
+      if (match && dist <= COSINE_GRAY[1]) {
+        // zona firme o gris: nombre galería
+        nombre = match.rec.nombre;
+        id = match.rec.id;
+        if (dist < COSINE_THRESHOLD) {
+          firmSeen.add(nombre);
+          const e = reIdHyst.get(nombre) || { count: 0, grace: 0 };
+          e.count += 1;
+          e.grace = 0;
+          reIdHyst.set(nombre, e);
+        }
+      }
+      // estado según dist real + histéresis N=3 grace2 (033) — sin mutar dist
+      let estado = "desconocido";
+      if (nombre !== "desconocido") {
+        if (dist < COSINE_THRESHOLD) {
+          const h = reIdHyst.get(nombre);
+          estado = h && h.count >= REID_N ? "confirmado" : "posible";
+        } else {
+          estado = "posible"; // zona gris 0.42–0.55 sin promover
+        }
+      }
+      const conf = Math.max(0, Math.min(1, 1 - dist));
+      out.push({
+        id, nombre, cosine: dist, conf, estado,
+        box: { x: p.x, y: p.y, w: p.w, h: p.h, conf: p.conf },
+        face_box: face,
+        frame_id: Date.now(), ts: Date.now(),
+      });
+    }
+    // decay histéresis: nombres conocidos NO vistos firme este frame → grace++
+    for (const [key, e] of [...reIdHyst.entries()]) {
+      if (!firmSeen.has(key)) {
+        e.grace += 1;
+        if (e.grace > REID_GRACE) {
+          reIdHyst.delete(key);
+        } else {
+          reIdHyst.set(key, e);
+        }
+      }
+    }
+    // ABORTED overlay-only: no muta Whiteboard si ABORTED, pero sí overlay (caller decide)
+    const whiteboardIds = lastEstado === "ABORTED" ? [] : out;
+    lastIdentidades = whiteboardIds;
+    trackIdentities(out);
+    if (onIdentidadesCb) try { onIdentidadesCb(whiteboardIds, out); } catch {}
+    return whiteboardIds;
+  }
+
   function evaluate() {
     const validNombre = isValidNombre(nombreInput.value);
     nombreInput.style.borderColor = nombreInput.value && !validNombre ? "#f87171" : "#334155";
@@ -294,7 +485,7 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } 
     else if (persons.length >= 2) blockReason = "Solo 1 persona en frame — despejá para registrar";
     else {
       lastPersonBox = persons[0];
-      face = mockFaceFromPerson(lastPersonBox);
+      face = getFaceBox(lastPersonBox);
       if (!face) blockReason = "Acercá rostro, bien iluminado (oclusión?)";
       else if (!consentGiven) blockReason = "Aceptá consentimiento para registrar";
       else if (!validNombre) blockReason = "Escribí nombre (2-32 letras) o dictá 🎤";
@@ -399,6 +590,12 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } 
   function handleDetecciones(payload) {
     lastBoxes = Array.isArray(payload?.boxes) ? payload.boxes : [];
     evaluate();
+    // visión viva: re-id async no bloquea evaluate
+    try {
+      const persons = selectPerson(lastBoxes);
+      // runReId es async, fire-and-forget
+      runReId(persons).catch(() => {});
+    } catch {}
   }
   function handleGesto(payload) {
     lastGesto = payload || { label: "none", conf: 0 };
@@ -496,5 +693,19 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient } 
       setHint(`Purge ack: ${payload?.n || 0} borrados (broadcast)`, "#f87171");
     },
     _embedder: embedder,
+    _faceDetector: faceDetector,
+    getLastIdentidades() {
+      return lastIdentidades.slice();
+    },
+    getTracker() {
+      return new Map(tracker);
+    },
+    setOnIdentidades(cb) {
+      onIdentidadesCb = typeof cb === "function" ? cb : null;
+    },
+    // test helpers
+    _runReId: runReId,
+    _iou: iou,
+    _shouldEmbed: shouldEmbed,
   };
 }

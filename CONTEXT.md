@@ -92,3 +92,15 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Hidratación híbrida**: `GET /identities` al iniciar (`app.py` `lifespan` carga `identities.json`) provee snapshot base, WebSocket solo transporta deltas `enroll_sync`/`purge` en tiempo real.
 - **Bypass de Leaky Queue**: `enroll_sync`/`purge` no pasan por `AsyncLeakyQueue N=1` (diseñada para `frame`), usan branch paralelo con `asyncio.Lock` + write atómico `tmp→replace` para `identities.json`.
 - **IdentitiesStore**: archivo `plataforma/webcam/backend/models/identities.json` con schema `{id,nombre,embedding[128],count,updatedAt}`; promedio móvil `hat_e = normalize(e_old*min(N,5)+e_new)` con cap 5, threshold coseno 0.42, clave primaria `id` (nanoid) permite nombres duplicados, `GET /identities` + `lifespan` load.
+
+## Términos de visión viva (ReID + Tracking per-frame) — Ticket 033
+
+- **ReID híbrido per-frame**: pipeline `YOLO person (conf>0.6)` → `BlazeFace short-range` → `mobilefacenet 128-d` que calcula embedding cada 3 frames @10Hz (~300ms) + trigger inmediato si `IoU<0.7` vs bbox previo; balancea `Glass-to-Glass <200ms` (75 ms desktop / 110 ms Moto G5) vs reactividad.
+- **Zona gris coseno 0.42–0.55**: rango `cosineDistance` donde `0.42`=match firme `Hola <nombre>` → Whiteboard, `0.42–0.55`=`posible <nombre>?` solo overlay amarillo sin promover, `>0.55`=desconocido.
+- **Histéresis ReID N=3**: confirmación `Hola <nombre>` solo tras 3 matches `cos<0.42` consecutivos, `grace=2` frames fallidos resetean; evita flicker `desconocido↔Hola`, análogo a `handle_gesto N=5`.
+- **Tracker IoU greedy + edad 5**: matching `IoU>0.5` greedy por área `w*h` para persistir `id` cuando YOLO flickerea 1 frame; `<1ms` vs `KCF`/`ByteTrack`; drop si 5 frames sin match (~500ms).
+- **ABORTED overlay-only**: en `ABORTED` latch re-id sigue pintando `overlay.js` pero **no** muta `WhiteboardState` ni alimenta `DecisionAgentica`; seguridad idéntica a `handle_gesto` latch.
+- **Multi-person viva**: `enroll` bloquea si `persons>=2`, `re-id` permite hasta 3 caras simultáneas con badges separados e `IoU` independiente.
+- **Budget visión viva**: reparto `YOLO ~35ms server paralelo + BlazeFace ~15ms + mobilefacenet ~32ms/3 media ~25ms + WS RTT ~25ms = ~107ms` medio dentro de `<200ms`; `MAX_FPS=10` + `LeakyQueue N=1` + `bufferedAmount>64KB` skip permanece.
+- **IdentidadVista**: vista per-frame `{id,nombre,cosine,conf,estado: confirmado (<0.42)|posible (0.42–0.55)|desconocido (>0.55), box, face_box, frame_id, ts}` producida por ReID híbrido client-side (hasta 3 por frame) desde `loadGallery()` hidratada.
+- **Whiteboard last_identidades**: campo `WhiteboardState.last_identidades: list[IdentidadVista] | None` (single-writer memoria, sin `transcript`); extiende envelope D5 `detecciones` con `identities` opcional, update híbrido cada 3 frames + `IoU<0.7`, client-side patch directo sin `LeakyQueue N=1`, reusa `GET /identities` + `PendingSync`, `DecisionAgentica` lo consume como contexto personalización (no `CmdVel`).
