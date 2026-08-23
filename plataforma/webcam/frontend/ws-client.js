@@ -5,7 +5,7 @@
  * Reconexión exponencial 500ms → 10s cap.
  *
  * Uso:
- *   const client = createPerceptionClient({ url: "ws://localhost:8001/ws/percepcion" });
+ *   const client = createPerceptionClient({ url: "ws://localhost:8000/ws/percepcion" });
  *   client.onDetecciones = (payload, env) => overlay.draw(payload.boxes);
  *   client.onGesto = (payload) => overlay.setGesto(payload);
  *   client.onEstado = (payload) => overlay.setEstado(payload);
@@ -24,7 +24,7 @@ export const RECONNECT_INITIAL_MS = 500;
 export const RECONNECT_MAX_MS = 10000;
 
 export function createPerceptionClient({ url, onDetecciones, onGesto, onEstado } = {}) {
-  const endpoint = url || "ws://localhost:8001/ws/percepcion";
+  const endpoint = url || "ws://localhost:8000/ws/percepcion";
   let ws = null;
   let seq = 0;
   let reconnectDelay = RECONNECT_INITIAL_MS;
