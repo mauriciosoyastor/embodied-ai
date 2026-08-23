@@ -12,23 +12,40 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-MODELO_DEFECTO = "opencode/muse-spark-1.2-contributor-free"
-# Alias Cursor free — mismo modelo, ID corto para DX
+MODELO_DEFECTO = "openai/gpt-oss-20b"
+# Alias Cursor free — compat legacy
 MODELO_CURSOR_FREE = "muse-spark-1.2-free"
-MODELO_GEMINI_LEGACY = "gemini-3.6-flash"
+MODELO_GEMINI_LEGACY = "gemini-2.0-flash"
 
 
 def _es_muse_spark(modelo: str) -> bool:
     m = modelo.lower()
-    return "muse-spark" in m or "opencode" in m or "cursor" in m
+    # Groq/HF/Ollama/OpenRouter + legacy — todo OpenAI via OPENAI_BASE_URL
+    return (
+        "muse-spark" in m
+        or "opencode" in m
+        or "cursor" in m
+        or "llama" in m
+        or "groq" in m
+        or "qwen" in m
+        or "deepseek" in m
+        or "gpt-oss" in m
+        or "gemma" in m
+    ) or bool(os.getenv("OPENAI_BASE_URL", "").strip())
 
 
 def cargar_clave(modelo: str | None = None) -> str:
     """Devuelve la API key según proveedor."""
     load_dotenv(dotenv_path=Path(__file__).parent / ".env")
     load_dotenv()
-    # Muse Spark / Cursor / OpenCode
-    for key in ("OPENCODE_API_KEY", "CURSOR_API_KEY", "OPENAI_API_KEY"):
+    # Groq primario (Ticket 021) + HF secundario + legacy Muse Spark
+    for key in (
+        "GROQ_API_KEY",
+        "HF_TOKEN",
+        "OPENCODE_API_KEY",
+        "CURSOR_API_KEY",
+        "OPENAI_API_KEY",
+    ):
         val = os.getenv(key, "").strip()
         if val:
             return val
