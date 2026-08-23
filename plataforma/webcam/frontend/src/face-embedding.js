@@ -73,6 +73,9 @@ export function createFaceEmbedder({ modelUrl } = {}) {
   let isStub = true;
   let ready = false;
 
+  // ort capturado para Tensor ctor (fix session.ort)
+  let ortRef = null;
+
   async function init() {
     if (ready) return;
     try {
@@ -80,12 +83,31 @@ export function createFaceEmbedder({ modelUrl } = {}) {
       const spec = "onnxruntime-web";
       const ort = await import(spec).catch(() => null);
       if (!ort) throw new Error("onnxruntime-web no disponible");
-      // probar fetch del modelo
-      const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-      if (!head || !head.ok) throw new Error(`modelo no existe ${url}`);
+      ortRef = ort;
+      if (ort.env?.wasm) {
+        // Vite: wasm en public/wasm/
+        try {
+          ort.env.wasm.wasmPaths = "/wasm/";
+        } catch {}
+      }
+      // probar fetch del modelo — con fallback HEAD 405 -> GET Range
+      let ok = false;
+      try {
+        const head = await fetch(url, { method: "HEAD" }).catch(() => null);
+        ok = !!(head && head.ok);
+        if (!ok && head && head.status === 405) {
+          const g = await fetch(url, { headers: { Range: "bytes=0-0" } }).catch(() => null);
+          ok = !!(g && (g.ok || g.status === 206));
+        }
+      } catch {
+        ok = false;
+      }
+      if (!ok) throw new Error(`modelo no existe ${url}`);
       session = await ort.InferenceSession.create(url, {
         executionProviders: ["wasm"],
       });
+      // guardar ort para Tensor
+      session._ort = ort;
       isStub = false;
     } catch {
       session = null;
@@ -119,8 +141,9 @@ export function createFaceEmbedder({ modelUrl } = {}) {
         data[112 * 112 + i] = (g - 0.5) / 0.5;
         data[2 * 112 * 112 + i] = (b - 0.5) / 0.5;
       }
+      const ort = session._ort || ortRef;
       // @ts-ignore ort types
-      const feeds = { input: new session.ort.Tensor("float32", data, [1, 3, 112, 112]) };
+      const feeds = { input: new ort.Tensor("float32", data, [1, 3, 112, 112]) };
       // session puede tener input name dinámico; fallback a primer key
       const out = await session.run(feeds);
       const key = Object.keys(out)[0];

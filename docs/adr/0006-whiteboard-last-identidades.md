@@ -1,0 +1,6 @@
+# ADR 0006 — Whiteboard last_identidades: extender detecciones client-side
+
+- **Estado:** aceptado 2026-08-23
+- **Contexto:** wayfinder 006 Tickets 033 (ReID híbrido cada 3 + IoU<0.7, N=3 grace2, IoU tracker, gris 0.42–0.55) + 034 grilling (payload D5, matching lado, schema Whiteboard, LeakyQueue, hidratación, consumo LLM). Alternativas: `detecciones` extendido vs `type:reid` nuevo; `last_identidades` lista vs `last_reid` singular vs sin Whiteboard; client-side vs server-side matching; LeakyQueue vs bypass vs patch directo; hidratación nueva vs reuso.
+- **Decisión:** extender `detecciones` con `identities?: IdentidadVista[]` (no nuevo type), `WhiteboardState.last_identidades: list[IdentidadVista]|None` max 3 con `IdentidadVista {id,nombre,cosine,conf,estado,box,face_box,frame_id,ts}`, matching **client-side** (`loadGallery` hidratada), **sin LeakyQueue** (patch JS directo + broadcast bypass opcional), reuso `GET /identities`/`PendingSync`, `DecisionAgentica` contexto personalización no `CmdVel`.
+- **Consecuencias:** single `seq/ts` sin duplicar, backward compatible, privacidad (embedding no sale), `<1ms` tracker, Whiteboard single-writer memoria sin `transcript`, `voice-chat.js` saluda por nombre sin afectar safety `ABORTED`.

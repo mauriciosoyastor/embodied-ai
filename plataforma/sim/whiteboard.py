@@ -32,6 +32,26 @@ class GestoReconocido(BaseModel):
     ts: float = Field(description="unix ms")
 
 
+class IdentidadVista(BaseModel):
+    """Vista per-frame 033/034 — client-side ReID hasta 3 por frame."""
+
+    id: str = Field(description="nanoid galería o unk_*")
+    nombre: str = Field(description="nombre galería o desconocido")
+    cosine: float = Field(ge=0.0, le=2.0, description="distancia coseno 0..2")
+    conf: float = Field(ge=0.0, le=1.0, description="conf 1-cosine o detector")
+    estado: Literal["confirmado", "posible", "desconocido"] = Field(
+        description="zona 0.42/0.55 + N=3"
+    )
+    box: dict[str, float] | None = Field(
+        default=None, description="YOLO person box normalizada"
+    )
+    face_box: dict[str, float] | None = Field(
+        default=None, description="BlazeFace bbox normalizada"
+    )
+    frame_id: int = Field(default=0, description="frame origen")
+    ts: float = Field(default=0.0, description="unix ms")
+
+
 class WhiteboardState(BaseModel):
     """Intercambio entre nodos graph — sin transcript (voz queda en webcam)."""
 
@@ -47,3 +67,6 @@ class WhiteboardState(BaseModel):
         default=None, description="última decisión LLM"
     )
     metrics: SimMetrics | None = Field(default=None, description="métricas sim")
+    last_identidades: list[IdentidadVista] | None = Field(
+        default=None, description="ReID viva 033/034 — lista 0-3 client-side"
+    )

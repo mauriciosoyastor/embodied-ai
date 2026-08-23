@@ -23,6 +23,18 @@ HAND_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
+# Visión viva 036 — frontend/public/models/ (BlazeFace + mobilefacenet)
+BLAZE_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+)
+
+# Deuda técnica (Opción C, 2026-08-23): no existe fuente pública verificada de
+# mobilefacenet.onnx 128-d (onnx/models 404, HF gated/pytorch-only).
+# El fallback stubEmbedding cubre tests/CI/demo; la fuente definitiva
+# (insightface w600k_mbf.onnx es 512-d y exigiría migrar el contrato
+# embedding[128] del mapa 004) se decide en una sesión enfocada de re-id browser.
+MOBILEFACENET_URL = ""
 
 # SHA256 esperados (None = solo loguea el hash, no falla si difiere).
 # Para fijar verificación estricta, reemplazar None por el hexdigest real
@@ -35,6 +47,15 @@ EXPECTED_SHA256: dict[str, str | None] = {
 MODELS: dict[str, dict[str, str]] = {
     "yolo11n.onnx": {"url": YOLO_URL},
     "hand_landmarker.task": {"url": HAND_URL},
+}
+
+# Modelos frontend visión viva (036) — destino frontend/public/models/
+FRONTEND_MODELS_DIR = (
+    pathlib.Path(__file__).parents[1] / "frontend" / "public" / "models"
+)
+FRONTEND_MODELS: dict[str, str] = {
+    "blaze_face_short_range.tflite": BLAZE_URL,
+    "mobilefacenet.onnx": MOBILEFACENET_URL,
 }
 
 DEFAULT_MODELS_DIR = pathlib.Path(__file__).parent / "models"
@@ -133,7 +154,7 @@ def download_one(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Descarga modelos webcam (YOLO + MediaPipe)"
+        description="Descarga modelos webcam (YOLO + MediaPipe + visión viva)"
     )
     p.add_argument(
         "--models-dir",
@@ -145,6 +166,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--yolo-url", default=YOLO_URL, help="override URL yolo11n.onnx")
     p.add_argument(
         "--hand-url", default=HAND_URL, help="override URL hand_landmarker.task"
+    )
+    p.add_argument(
+        "--blaze-url", default=BLAZE_URL, help="override URL blaze_face_short_range"
+    )
+    p.add_argument(
+        "--face-url", default=MOBILEFACENET_URL, help="override URL mobilefacenet.onnx"
+    )
+    p.add_argument(
+        "--skip-frontend",
+        action="store_true",
+        help="no descargar modelos frontend (blaze/mobilefacenet)",
     )
     p.add_argument(
         "--verify-hash",
@@ -184,8 +216,32 @@ def main(argv: list[str] | None = None) -> int:
         success = download_one(filename, url, dest, args.force, expected)
         ok = ok and success
 
+    # frontend visión viva (036): blaze + mobilefacenet a public/models/
+    # mobilefacenet sin fuente verificada (deuda Opción C) → skip con aviso, no falla
+    if not args.skip_frontend:
+        FRONTEND_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        fe_urls: dict[str, str] = {
+            "blaze_face_short_range.tflite": args.blaze_url,
+            "mobilefacenet.onnx": args.face_url,
+        }
+        for filename in ("blaze_face_short_range.tflite", "mobilefacenet.onnx"):
+            dest = FRONTEND_MODELS_DIR / filename
+            if not fe_urls[filename]:
+                if dest.exists():
+                    print(f"[SKIP] {filename} presente ({dest.stat().st_size:,} bytes)")
+                else:
+                    print(
+                        f"[DEUDA] {filename} sin fuente pública verificada "
+                        "(stub fallback activo — ver MOBILEFACENET_URL)"
+                    )
+                continue
+            success = download_one(filename, fe_urls[filename], dest, args.force, None)
+            ok = ok and success
+
     if ok:
         print("\nTodos los modelos listos en", models_dir)
+        if not args.skip_frontend:
+            print("Frontend modelos en", FRONTEND_MODELS_DIR)
         return 0
     print("\nAlgunos modelos fallaron — revisar logs", file=sys.stderr)
     return 1
