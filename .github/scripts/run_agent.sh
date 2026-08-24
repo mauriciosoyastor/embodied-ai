@@ -156,17 +156,42 @@ PROMPT
     echo "${diff}"
   } >> "$prompt_file"
 
-  local result verdict summary
+  local result verdict summary raw_result
   result="$(claude -p --bare --max-budget-usd 2 --output-format json < "$prompt_file" \
     || true)"
-  verdict="$(printf '%s' "$result" | jq -r '.[-1].result // empty' 2>/dev/null \
-    | jq -r '.verdict // empty' 2>/dev/null || true)"
-  summary="$(printf '%s' "$result" | jq -r '.[-1].result // empty' 2>/dev/null \
-    | jq -r '.summary // empty' 2>/dev/null || true)"
-  if [[ -z "$verdict" ]]; then
+  # Extracción robusta: soporta (a) claude JSON output con .result anidado,
+  # (b) salida directa JSON, (c) bloque markdown ```json ... ```.
+  raw_result="$(printf '%s' "$result" | jq -r '.[-1].result // .result // empty' 2>/dev/null || true)"
+  if [[ -z "$raw_result" || "$raw_result" == "null" ]]; then
+    raw_result="$result"
+  fi
+  # Strip markdown fences si existen
+  raw_result="$(printf '%s' "$raw_result" | sed -e 's/```json//g' -e 's/```//g')"
+  # Intenta extraer el primer objeto JSON que contenga "verdict"
+  local json_obj
+  json_obj="$(printf '%s' "$raw_result" | python3 -c "
+import sys, re, json
+text = sys.stdin.read()
+# busca objeto JSON con verdict
+m = re.search(r'\{[^{}]*\"verdict\"[^{}]*\}', text, re.DOTALL)
+if m:
+    print(m.group(0))
+else:
+    # fallback: primer objeto JSON cualquiera
+    m2 = re.search(r'\{.*\}', text, re.DOTALL)
+    print(m2.group(0) if m2 else '')
+" 2>/dev/null || true)"
+  if [[ -z "$json_obj" ]]; then
+    json_obj="$raw_result"
+  fi
+  verdict="$(printf '%s' "$json_obj" | jq -r '.verdict // empty' 2>/dev/null | tr -d '\r' | xargs || true)"
+  summary="$(printf '%s' "$json_obj" | jq -r '.summary // empty' 2>/dev/null || true)"
+  # Normalizar verdict
+  verdict="$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]' | xargs)"
+  if [[ "$verdict" != "approve" && "$verdict" != "request_changes" ]]; then
     verdict="request_changes"
   fi
-  if [[ -z "$summary" ]]; then
+  if [[ -z "$summary" || "$summary" == "null" ]]; then
     summary="Review sin resumen (salida no parseable)."
   fi
 

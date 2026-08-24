@@ -134,10 +134,14 @@ jobs:
           )
           jq -n --arg b "$body" '{event:"REQUEST_CHANGES", body:$b}' \
             | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
-          GH_TOKEN="${{ github.token }}" gh workflow run agent-implement.yml \
-            -f issue_number="$ISSUE_NUMBER" \
-            -f pull_number="$PULL_NUMBER" \
-            -f iteration="$next"
+          if gh workflow view agent-implement.yml --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            GH_TOKEN="${{ github.token }}" gh workflow run agent-implement.yml \
+              -f issue_number="$ISSUE_NUMBER" \
+              -f pull_number="$PULL_NUMBER" \
+              -f iteration="$next" || echo "::warning:: dispatch agent-implement falló (ignorado)"
+          else
+            echo "::warning:: agent-implement.yml no existe o está deshabilitado (.disabled) — skipping dispatch"
+          fi
 
       - name: Agotar loop → needs-human-attention
         if: steps.review.outputs.verdict == 'request_changes' && fromJSON(steps.review.outputs.iteration) >= 3
