@@ -191,6 +191,42 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     }
 
 
+class VisionCaptionRequest(BaseModel):
+    frame_id: int = 0
+    jpeg_b64: str | None = None
+    objects: list[str] | None = None
+
+
+@app.post("/vision/caption")
+async def vision_caption(req: VisionCaptionRequest) -> dict[str, object]:
+    """VLM 1Hz Groq→HF→Gemini→mock. No rompe /voz; TODO overlay #82."""
+    try:
+        from plataforma.webcam.backend.inference.vlm import get_vlm_client
+
+        client = get_vlm_client()
+        leyenda = client.caption(
+            image_b64=req.jpeg_b64, frame_id=req.frame_id, objects=req.objects
+        )
+        return {
+            "frame_id": leyenda.frame_id,
+            "caption": leyenda.caption,
+            "objects": list(leyenda.objects),
+            "conf": leyenda.conf,
+            "ts": leyenda.ts,
+            "provider": leyenda.provider,
+        }
+    except Exception as exc:  # pragma: no cover
+        logger.warning("vision/caption fallback mock: %s", exc)
+        return {
+            "frame_id": req.frame_id,
+            "caption": "Escena vacia (mock)",
+            "objects": req.objects or [],
+            "conf": 0.5,
+            "ts": 0,
+            "provider": "mock",
+        }
+
+
 @app.websocket("/ws/percepcion")
 async def ws_percepcion(websocket: WebSocket) -> None:
     """Único WebSocket percepción — delega a ws.perception_ws_handler."""
