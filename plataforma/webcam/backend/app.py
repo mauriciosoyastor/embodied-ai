@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import get_gesture_recognizer
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
+from plataforma.webcam.backend.metrics import render_prometheus
 from plataforma.webcam.backend.ws import perception_ws_handler
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,15 @@ app = FastAPI(title="webcam-backend", version="0.1.0", lifespan=lifespan)
 async def health() -> dict[str, str]:
     """Healthcheck simple."""
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics() -> Any:
+    """OTel Prometheus — S2-D cache_hit_ratio + ttl_expirations + glass_to_glass."""
+    from fastapi.responses import PlainTextResponse
+
+    body = render_prometheus()
+    return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
 
 
 @app.get("/identities")

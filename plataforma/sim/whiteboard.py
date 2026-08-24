@@ -140,7 +140,15 @@ class PercepcionVista(BaseModel):
             now = time.time()
         if not self.detecciones:
             return False
-        return (now - self.ts_detecciones) <= self.TTL_DETECCIONES
+        fresh = (now - self.ts_detecciones) <= self.TTL_DETECCIONES
+        if not fresh:
+            try:
+                from plataforma.webcam.backend.metrics import record_ttl_expiration
+
+                record_ttl_expiration("detecciones")
+            except Exception:
+                pass
+        return fresh
 
     def is_atributos_fresh(self, now: float | None = None) -> bool:
         if now is None:

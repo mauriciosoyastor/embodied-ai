@@ -121,3 +121,7 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Centroide**: `x_c = x+w/2, y_c = y+h/2` normalizado [0,1] por bbox; permite ordenamiento espacial CPU para "¿qué hay a la izquierda de la taza?".
 - **Tamaño**: `area=w*h` → `pequeño <0.05 < mediano <0.15 < grande` (G2); sin inferencia.
 - **Color HSV**: histograma 18 bins H con máscara `S>50 V>50` sobre crop bbox (<0.1ms), 12 colores + gris/blanco/negro/unknown + hex; `color = color_vlm if fresh else color_hsv`.
+- **ByteTrack**: MOT IoU greedy ligero `tracker.py:38` con `max_age=30` + `iou_threshold=0.5`, `track_id` persistente <1ms; `LRUCache 64` `IoU>0.85` TTL 2s evita recalcular `color_hsv` (`hit_ratio` OTel).
+- **Zero-Copy**: `ws.py:636` `receiver` guarda `img_view` por referencia en `slow_queue` 1Hz sin re-serializar Base64; crops `img[y1:y2,x1:x2]` son `memoryview` view.
+- **Thread Pinning**: `onnxruntime SessionOptions intra_op=2 inter_op=1 OMP_NUM_THREADS=2 ORT_SEQUENTIAL` unificado en `yolo.py:302`/`depth.py`/`pose.py` para aislar inferencia vs ByteTrack/HSV.
+- **OTel / Prometheus**: `GET /metrics` `metrics.py:38` expone `cache_hit_ratio`, `cache_hits/misses`, `ttl_expirations{field}`, `glass_to_glass_p50/p95_ms`, `yolo_infer_p50_ms` para `ws.py` leaky y TTL.
