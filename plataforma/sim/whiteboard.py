@@ -36,14 +36,16 @@ class GestoReconocido(BaseModel):
 
 
 class IdentidadVista(BaseModel):
-    """Vista per-frame 033/034 — client-side ReID hasta 3 por frame."""
+    """Vista per-frame 033/034 + 040-042 memoria objetos — 5 estados con TTL vecino."""
 
     id: str = Field(description="nanoid galería o unk_*")
     nombre: str = Field(description="nombre galería o desconocido")
     cosine: float = Field(ge=0.0, le=2.0, description="distancia coseno 0..2")
     conf: float = Field(ge=0.0, le=1.0, description="conf 1-cosine o detector")
-    estado: Literal["confirmado", "posible", "desconocido"] = Field(
-        description="zona 0.42/0.55 + N=3"
+    estado: Literal[
+        "confirmado", "posible", "ambiguo", "provisional", "desconocido"
+    ] = Field(
+        description="zona 0.42/0.55 N=3 + ambiguo white EMA*0.2 + provisional TENTATIVE"
     )
     box: dict[str, float] | None = Field(
         default=None, description="YOLO person box normalizada"

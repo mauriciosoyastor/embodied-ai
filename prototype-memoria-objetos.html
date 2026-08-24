@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Prototype 043 — Memoria Objetos White Ambiguous</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  body{margin:0;background:#020617;color:#e2e8f0;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:12px 16px;background:#0f172a;border-bottom:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center}
+  header h1{font-size:14px;margin:0}
+  header span{font-size:11px;color:#94a3b8}
+  .bar{padding:8px 16px;display:flex;gap:8px;align-items:center;background:#0f172a;border-bottom:1px solid #1e293b}
+  .bar button{padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-size:12px}
+  .bar button.active{background:#16a34a;border-color:#16a34a;color:#fff}
+  #stage{position:relative;width:640px;height:480px;margin:16px auto;background:#0b1220;border:1px solid #1e293b;border-radius:8px;overflow:hidden}
+  canvas{position:absolute;inset:0}
+  .legend{width:640px;margin:8px auto;font-size:11px;color:#94a3b8;line-height:1.4}
+  .legend b{color:#e2e8f0}
+  .badge{position:absolute;transform:translate(-50%,-100%);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid;pointer-events:none;white-space:nowrap}
+  /* estados 042 */
+  .b-confirmado{background:#14532d;color:#86efac;border-color:#22c55e}
+  .b-posible{background:#78350f;color:#fde68a;border-color:#f59e0b}
+  .b-ambiguo{background:#f8fafc;color:#334155;border:1px dashed #94a3b8;box-shadow:0 0 0 2px #fff inset}
+  .b-provisional{background:#1e293b;color:#fde68a;border:1px dashed #f59e0b;opacity:0.9}
+  .b-desconocido{background:#334155;color:#cbd5e1;border-color:#64748b}
+  .box{position:absolute;border-width:2px;border-style:solid;border-radius:4px}
+  .box.confirmado{border-color:#22c55e;box-shadow:0 0 8px #22c55e44}
+  .box.posible{border-color:#f59e0b}
+  .box.ambiguo{border-color:#f8fafc;border-style:dashed;background:#f8fafc11}
+  .box.provisional{border-color:#f59e0b;border-style:dashed;background:#f59e0b11}
+  .box.desconocido{border-color:#64748b}
+  .traj{position:absolute;width:4px;height:4px;border-radius:50%;background:currentColor;opacity:0.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>Prototype 043 — Memoria Objetos — Overlay White Ambiguous (throwaway)</h1>
+  <span>?variant=a (badge-box) vs b (chip-list) — veredicto 035: A</span>
+</header>
+<div class="bar">
+  <button id="btn-a" class="active">Variante A · badge-box (recomendada)</button>
+  <button id="btn-b">Variante B · chip-list</button>
+  <span style="margin-left:auto;font-size:11px;color:#64748b">Ticket 043 · 007-map-memoria-objetos · no plegar</span>
+</div>
+<div id="stage">
+  <!-- canvas base simula video -->
+  <canvas id="cv" width="640" height="480"></canvas>
+  <!-- boxes + badges overlay -->
+  <div id="overlay" style="position:absolute;inset:0"></div>
+</div>
+<div class="legend">
+  <b>Estados 042 (5):</b> <span class="b-confirmado" style="padding:1px 4px;border-radius:3px">confirmado verde &lt;0.42 N=3 STRONG</span> →
+  <span class="b-posible" style="padding:1px 4px">posible amarillo 0.42-0.55 AMBIGUOUS EMA*0.2</span> →
+  <span class="b-ambiguo" style="padding:1px 4px">ambiguo blanco dashed gap&lt;0.03 quality&lt;0.35 (white REMIND)</span> →
+  <span class="b-provisional" style="padding:1px 4px">provisional amarillo tenue dashed TENTATIVE confirm2</span> →
+  <span class="b-desconocido" style="padding:1px 4px">desconocido gris &gt;0.55 WEAK skip</span><br/>
+  <b>Variante A:</b> badge ligado a box (Variante A 035 ganadora) + traza `traj 12` (`enrollment-panel.js:371`). <b>B:</b> chip-list superior para &gt;2 objetos. Hover bordes para ver `Δ+0.20` rescue y `TTL vecino≈10` (Ticket 041/042). Fuente: 037 `8/8` `dup0.92` 038 `debounce3`.
+</div>
+<script>
+// mock detecciones Whitelist v2 12 + person separada
+const detections = [
+  {cls:'chair', x:0.08,y:0.22,w:0.22,h:0.48, estado:'confirmado', nombre:'chair#1', cos:0.31, conf:0.69},
+  {cls:'chair', x:0.38,y:0.25,w:0.21,h:0.45, estado:'ambiguo', nombre:'chair#2?', cos:0.48, conf:0.52},
+  {cls:'couch', x:0.62,y:0.30,w:0.30,h:0.38, estado:'provisional', nombre:'couch?', cos:0.44, conf:0.56},
+  {cls:'bottle', x:0.15,y:0.68,w:0.06,h:0.16, estado:'posible', nombre:'bottle?', cos:0.50, conf:0.50},
+  {cls:'laptop', x:0.70,y:0.62,w:0.14,h:0.12, estado:'desconocido', nombre:'desconocido', cos:0.78, conf:0.22},
+];
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d');
+function drawBase(){
+  ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,640,480);
+  // gradiente piso madera simple
+  const g=ctx.createLinearGradient(0,300,0,480); g.addColorStop(0,'#1e293b'); g.addColorStop(1,'#334155');
+  ctx.fillStyle=g; ctx.fillRect(0,300,640,180);
+  ctx.fillStyle='#94a3b8'; ctx.font='10px system-ui'; ctx.fillText('mock frame D5 Whitelist 12 + person aislada',10,14);
+  ctx.fillStyle='#475569'; ctx.fillRect(40,330,560,8);
+}
+function render(variant){
+  drawBase();
+  const overlay=document.getElementById('overlay'); overlay.innerHTML='';
+  if(variant==='b'){
+    // chip-list top
+    const chipBar=document.createElement('div');
+    chipBar.style.cssText='position:absolute;top:6px;left:6px;right:6px;display:flex;gap:6px;flex-wrap:wrap';
+    detections.forEach(d=>{
+      const c=document.createElement('span');
+      c.textContent=`${d.cls} ${d.estado} ${d.conf.toFixed(2)}`;
+      c.className='badge b-'+d.estado;
+      c.style.position='static'; c.style.transform='none';
+      chipBar.appendChild(c);
+    });
+    overlay.appendChild(chipBar);
+  }
+  detections.forEach(d=>{
+    const px=d.x*640, py=d.y*480, pw=d.w*640, ph=d.h*480;
+    const box=document.createElement('div');
+    box.className='box '+d.estado;
+    box.style.left=px+'px'; box.style.top=py+'px'; box.style.width=pw+'px'; box.style.height=ph+'px';
+    box.title=`${d.cls} cos ${d.cos} conf ${d.conf} → ${d.estado} ( Δ+0.20 rescue 0.60 quality0.35 )`;
+    overlay.appendChild(box);
+    // badge
+    if(variant==='a'){
+      const badge=document.createElement('div');
+      badge.className='badge b-'+d.estado;
+      badge.style.left=(px+pw/2)+'px'; badge.style.top=(py-4)+'px';
+      const icon = d.estado==='confirmado'?'✓': d.estado==='ambiguo'?'?': d.estado==='provisional'?'⋯': d.estado==='posible'?'~':'?';
+      badge.textContent=`${icon} ${d.nombre} ${d.estado==='ambiguo'?'blanco':''}`.trim();
+      overlay.appendChild(badge);
+      // traj 12 puntos mock
+      for(let i=0;i<6;i++){
+        const t=document.createElement('div'); t.className='traj';
+        t.style.color = d.estado==='confirmado'?'#22c55e': d.estado==='ambiguo'?'#f8fafc':'#94a3b8';
+        t.style.left=(px+pw/2 - i*6)+'px'; t.style.top=(py+ph/2 - i*2)+'px';
+        t.style.opacity=0.18+ i*0.08;
+        overlay.appendChild(t);
+      }
+    }
+    // white ambiguous extra: ? grande centro
+    if(d.estado==='ambiguo'){
+      const q=document.createElement('div');
+      q.textContent='?'; q.style.cssText=`position:absolute;left:${px+pw/2}px;top:${py+ph/2}px;transform:translate(-50%,-50%);font-size:28px;color:#f8fafc;opacity:0.9;text-shadow:0 0 6px #000`;
+      overlay.appendChild(q);
+    }
+  });
+}
+document.getElementById('btn-a').onclick=()=>{document.getElementById('btn-a').classList.add('active');document.getElementById('btn-b').classList.remove('active');render('a')};
+document.getElementById('btn-b').onclick=()=>{document.getElementById('btn-b').classList.add('active');document.getElementById('btn-a').classList.remove('active');render('b')};
+render('a');
+</script>
+</body>
+</html>

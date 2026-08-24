@@ -84,6 +84,8 @@ export function createOverlay({
   function colorForEstado(estado) {
     if (estado === "confirmado") return "#22c55e";
     if (estado === "posible") return "#f59e0b";
+    if (estado === "ambiguo") return "#f8fafc"; // blanco dashed 042
+    if (estado === "provisional") return "#eab308"; // amarillo tenue dashed
     return "#64748b";
   }
 
@@ -241,15 +243,21 @@ export function createOverlay({
       const cls = String(b.cls ?? "obj");
       const conf = Math.max(0, Math.min(1, Number(b.conf) || 0));
 
+      // dashed si ambiguo/provisional (white REMIND)
+      if (ident && (ident.estado === "ambiguo" || ident.estado === "provisional")) ctx.setLineDash([6, 4]);
+      else ctx.setLineDash([]);
       ctx.strokeStyle = color;
       ctx.lineWidth = ident ? 2.5 : 2;
       ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
 
-      // etiqueta con fondo — Variante A badge si hay identidad
+      // etiqueta con fondo — Variante A badge si hay identidad (5 estados 042)
       let label;
       if (ident) {
         if (ident.estado === "confirmado") label = `Hola ${ident.nombre} ✓ ${(1 - ident.cosine).toFixed(2)}`;
         else if (ident.estado === "posible") label = `posible ${ident.nombre}? ${ident.cosine.toFixed(2)}`;
+        else if (ident.estado === "ambiguo") label = `? ${ident.nombre} blanco ${ident.cosine.toFixed(2)}`;
+        else if (ident.estado === "provisional") label = `⋯ ${ident.nombre} prov ${ident.cosine.toFixed(2)}`;
         else label = `desconocido ${ident.cosine.toFixed(2)}`;
       } else {
         label = `${cls} ${(conf * 100).toFixed(0)}%`;
