@@ -219,13 +219,28 @@ function initPercepcion() {
   function renderAtributos() {
     if (!atributosListEl || !atributosJsonEl) return;
     const q = (filterEl?.value || "").toLowerCase().trim();
-    const filtered = !q ? lastAtributos : lastAtributos.filter((a) => {
-      const col = String(a.color || a.color_hsv || "").toLowerCase();
-      const tam = String(a.tamano || "").toLowerCase();
-      const cls = String(a.cls || "").toLowerCase();
-      const z = a.z_rel !== null && a.z_rel !== undefined ? (a.z_rel < 0.45 ? "cerca" : a.z_rel < 0.65 ? "medio" : "lejos") : "";
-      return col.includes(q) || tam.includes(q) || cls.includes(q) || z.includes(q);
-    });
+    // S4-C relaciones espaciales: si q contiene izquierda/derecha + taza, ordenar por x_c
+    let filtered;
+    if (q.includes("izquierda") || q.includes("derecha")) {
+      const cup = lastAtributos.find((a) => String(a.cls).toLowerCase() === "cup");
+      const sorted = [...lastAtributos].sort((a, b) => Number(a.centroide?.x_c ?? a.x ?? 0) - Number(b.centroide?.x_c ?? b.x ?? 0));
+      if (cup) {
+        const cupX = Number(cup.centroide?.x_c ?? cup.x ?? 0.5);
+        if (q.includes("izquierda")) filtered = sorted.filter((a) => Number(a.centroide?.x_c ?? a.x ?? 0) < cupX);
+        else filtered = sorted.filter((a) => Number(a.centroide?.x_c ?? a.x ?? 0) > cupX);
+        if (!filtered.length) filtered = sorted;
+      } else {
+        filtered = sorted;
+      }
+    } else {
+      filtered = !q ? lastAtributos : lastAtributos.filter((a) => {
+        const col = String(a.color || a.color_hsv || "").toLowerCase();
+        const tam = String(a.tamano || "").toLowerCase();
+        const cls = String(a.cls || "").toLowerCase();
+        const z = a.z_rel !== null && a.z_rel !== undefined ? (a.z_rel < 0.45 ? "cerca" : a.z_rel < 0.65 ? "medio" : "lejos") : "";
+        return col.includes(q) || tam.includes(q) || cls.includes(q) || z.includes(q);
+      });
+    }
     atributosListEl.innerHTML = "";
     for (const a of filtered.slice(0, 8)) {
       const span = document.createElement("span");
