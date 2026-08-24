@@ -19,6 +19,9 @@ import urllib.request
 # Modelos oficiales (Ultralytics + Google AI Edge)
 # ---------------------------------------------------------------------------
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx"
+POSE_URL = (
+    "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-pose.onnx"
+)
 HAND_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
@@ -41,11 +44,13 @@ MOBILEFACENET_URL = ""
 # y el script fallará si el hash descargado no coincide.
 EXPECTED_SHA256: dict[str, str | None] = {
     "yolo11n.onnx": None,
+    "yolo11n-pose.onnx": None,
     "hand_landmarker.task": None,
 }
 
 MODELS: dict[str, dict[str, str]] = {
     "yolo11n.onnx": {"url": YOLO_URL},
+    "yolo11n-pose.onnx": {"url": POSE_URL},
     "hand_landmarker.task": {"url": HAND_URL},
 }
 
@@ -165,6 +170,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="re-descarga aunque ya exista")
     p.add_argument("--yolo-url", default=YOLO_URL, help="override URL yolo11n.onnx")
     p.add_argument(
+        "--pose-url", default=POSE_URL, help="override URL yolo11n-pose.onnx"
+    )
+    p.add_argument(
         "--hand-url", default=HAND_URL, help="override URL hand_landmarker.task"
     )
     p.add_argument(
@@ -194,11 +202,12 @@ def main(argv: list[str] | None = None) -> int:
     # overrides de URL si se pasan por CLI
     urls: dict[str, str] = {
         "yolo11n.onnx": args.yolo_url,
+        "yolo11n-pose.onnx": args.pose_url,
         "hand_landmarker.task": args.hand_url,
     }
 
     ok = True
-    for filename in ("yolo11n.onnx", "hand_landmarker.task"):
+    for filename in ("yolo11n.onnx", "yolo11n-pose.onnx", "hand_landmarker.task"):
         url = urls[filename]
         dest = models_dir / filename
         expected = EXPECTED_SHA256.get(filename)
