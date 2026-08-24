@@ -662,7 +662,21 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 continue
             # Leaky: si llega nuevo antes de consumir, descarta anterior
             await fast_queue.put(payload)
-            await slow_queue.put(payload)
+            # S2-C Zero-Copy: slow_queue guarda referencia img_view sin Base64 copy
+            try:
+                jpeg_b64_slow = str(payload.get("jpeg_b64", ""))
+                img_view = decode_jpeg_b64(jpeg_b64_slow)
+                if img_view is None:
+                    import numpy as np
+
+                    img_view = np.zeros((480, 640, 3), dtype=np.uint8)
+                payload_slow = dict(payload)
+                # view por referencia — no serializa Base64 de nuevo en slow path
+                payload_slow["img_view"] = img_view  # type: ignore
+                payload_slow["_zero_copy"] = True  # type: ignore
+                await slow_queue.put(payload_slow)
+            except Exception:
+                await slow_queue.put(payload)
 
     async def fast_processor() -> None:
         while True:
@@ -747,8 +761,11 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 if not isinstance(frame_id_any, int):
                     continue
                 frame_id: int = frame_id_any
-                jpeg_b64 = str(frame_payload.get("jpeg_b64", ""))
-                img = decode_jpeg_b64(jpeg_b64)
+                # S2-C Zero-Copy: si viene img_view por referencia, úsala sin decode
+                img = frame_payload.get("img_view")  # type: ignore
+                if img is None:
+                    jpeg_b64 = str(frame_payload.get("jpeg_b64", ""))
+                    img = decode_jpeg_b64(jpeg_b64)
                 if img is None:
                     # fallback a zeros para headless tests con b64 dummy inválido
                     try:
