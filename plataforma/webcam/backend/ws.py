@@ -37,6 +37,10 @@ from plataforma.webcam.backend.inference.yolo import get_yolo_detector
 
 # Global clients para broadcast purge (hibrido)
 connected_clients: set[WebSocketLike] = set()
+# S3 — último PercepcionVista para anclaje voz frame_id
+last_atributos: list[dict[str, Any]] = []
+last_frame_id: int = 0
+last_ts: int = 0
 
 # ---------------------------------------------------------------------------
 # Tipos
@@ -706,6 +710,17 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                     width=w_int,
                     height=h_int,
                 )
+                # S3 — anclaje voz frame_id + actualizar global last_atributos
+                try:
+                    global last_atributos, last_frame_id, last_ts
+
+                    last_atributos = list(boxes_payload)
+                    last_frame_id = frame_id
+                    last_ts = ts
+                    # S3 dynamic PromptList: si YOLO_WORLD_DYNAMIC_BY_VOZ y payload trae transcript, actualizar  # noqa: E501
+                    # (transcript vendría por ws control, no por frame; se maneja en VozHandler)  # noqa: E501
+                except Exception:
+                    pass
                 async with seq_lock:
                     seq_counter[0] += 1
                     det_seq = seq_counter[0]

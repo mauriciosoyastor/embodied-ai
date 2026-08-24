@@ -28,6 +28,31 @@ LRU_TTL_MS: int = 2000
 OTEL_ENABLED: bool = True
 ONNX_INTRA_OP: int = 2
 ONNX_INTER_OP: int = 1
+# S3 — PromptList W30 / World-s (mapa #88 G1/G2)
+YOLO_WORLD_ENABLED: bool = False
+YOLO_WORLD_DYNAMIC_BY_VOZ: bool = False
+YOLO_WORLD_PROMPTLIST_STATIC: list[str] = [
+    "person",
+    "chair",
+    "couch",
+    "dining table",
+    "bed",
+    "toilet",
+    "tv",
+    "laptop",
+    "keyboard",
+    "mouse",
+    "cell phone",
+    "remote",
+    "bottle",
+    "cup",
+    "wine glass",
+    "bowl",
+    "book",
+    "backpack",
+    "handbag",
+    "potted plant",
+]
 
 YOLO_WHITELIST: frozenset[str] = frozenset(
     {
