@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import get_gesture_recognizer
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
+from plataforma.webcam.backend.metrics import render_prometheus
 from plataforma.webcam.backend.ws import perception_ws_handler
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,15 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+async def metrics() -> Any:
+    """OTel Prometheus — S2-D cache_hit_ratio + ttl_expirations + glass_to_glass."""
+    from fastapi.responses import PlainTextResponse
+
+    body = render_prometheus()
+    return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
+
+
 @app.get("/identities")
 async def list_identities() -> list[dict[str, object]]:
     """Snapshot hibrido para hidratación inicial (Ticket 025)."""
@@ -66,10 +77,114 @@ async def list_identities() -> list[dict[str, object]]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final."""
+    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista."""  # noqa: E501
     prompt = req.prompt.strip()
     if not prompt:
         return {"text": ""}
+    # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
+    try:
+        low_q = prompt.lower()
+        is_color_q = any(
+            k in low_q
+            for k in [
+                "color",
+                "tamaño",
+                "tamano",
+                "qué ves",
+                "que ves",
+                "izquierda",
+                "derecha",
+                "distancia",
+            ]
+        )
+        if is_color_q:
+            import time
+
+            from plataforma.webcam.backend.ws import (
+                last_atributos,
+                last_frame_id,
+                last_ts,
+            )
+
+            now_ms = int(time.time() * 1000)
+            age = now_ms - int(last_ts or 0)
+            if last_atributos and age < 500:
+                # buscar taza/cup si pregunta específica, sino listar todos
+                target = None
+                if "taza" in low_q or "cup" in low_q:
+                    target = next(
+                        (a for a in last_atributos if a.get("cls") == "cup"), None
+                    )
+                elif "tv" in low_q:
+                    target = next(
+                        (a for a in last_atributos if a.get("cls") == "tv"), None
+                    )
+                # relaciones espaciales: izquierda/derecha por centroide
+                if "izquierda" in low_q or "derecha" in low_q and "taza" in low_q:
+                    sorted_at = sorted(
+                        last_atributos,
+                        key=lambda a: float(a.get("centroide", {}).get("x_c", 0.5)),
+                    )
+                    cup = next(
+                        (a for a in last_atributos if a.get("cls") == "cup"), None
+                    )
+                    if cup and sorted_at:
+                        cup_x = float(cup.get("centroide", {}).get("x_c", 0.5))
+                        left = [
+                            a
+                            for a in sorted_at
+                            if float(a.get("centroide", {}).get("x_c", 0)) < cup_x
+                        ]
+                        right = [
+                            a
+                            for a in sorted_at
+                            if float(a.get("centroide", {}).get("x_c", 0)) > cup_x
+                        ]
+                        if "izquierda" in low_q and left:
+                            a = left[-1]
+                            return {
+                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')} a z {a.get('z_rel') or 'desconocida'} (frame #{last_frame_id})."  # noqa: E501
+                            }
+                        if "derecha" in low_q and right:
+                            a = right[0]
+                            return {
+                                "text": f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                            }
+                if target and "color" in low_q:
+                    return {
+                        "text": f"La {target.get('cls')} es {target.get('color')} ({target.get('color_hsv_hex')}) tamaño {target.get('tamano')} área {round(float(target.get('area', 0)) * 100)}% a distancia {target.get('z_rel') or 'media'} (frame #{last_frame_id}, age {age}ms)."  # noqa: E501
+                    }
+                if "qué ves" in low_q or "que ves" in low_q:
+                    descs = ", ".join(
+                        [
+                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} z{a.get('z_rel') or '?'}"  # noqa: E501
+                            for a in last_atributos[:4]
+                        ]
+                    )
+                    return {
+                        "text": f"Veo {len(last_atributos)} objetos (frame #{last_frame_id}): {descs}."  # noqa: E501
+                    }
+                if target:
+                    return {
+                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')} (frame #{last_frame_id})."  # noqa: E501
+                    }
+            # S3 dynamic PromptList: extraer prompts si YOLO_WORLD_DYNAMIC_BY_VOZ
+            try:
+                from plataforma.webcam.backend.config import YOLO_WORLD_DYNAMIC_BY_VOZ
+
+                if YOLO_WORLD_DYNAMIC_BY_VOZ:
+                    from plataforma.webcam.backend.inference.yolo_world import (
+                        extract_prompts_from_transcript,
+                        get_yolo_world_detector,
+                    )
+
+                    prompts = extract_prompts_from_transcript(prompt)
+                    if prompts:
+                        get_yolo_world_detector(prompt_list=prompts)
+            except Exception:
+                pass
+    except Exception:
+        pass
     import os
     import pathlib
     import sys

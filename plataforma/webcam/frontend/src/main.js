@@ -83,6 +83,14 @@ function createPercepcionDOM() {
       <div id="p-objects" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"></div>
       <span id="p-provider" style="font-size:9px;color:#475569;opacity:0.7"></span>
     </div>
+    <div id="p-atributos" style="margin-top:8px;padding:8px;border:1px solid #1e293b;border-radius:6px;background:#020617">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input id="p-filter" placeholder="filtrar: rojo, cerca, mediano..." style="flex:1;padding:4px 6px;border-radius:6px;border:1px solid #334155;background:#020617;color:#e2e8f0;font-size:11px" />
+        <span id="p-ttl" style="font-size:9px;color:#475569"></span>
+      </div>
+      <div id="p-atributos-list" style="display:flex;flex-wrap:wrap;gap:4px;min-height:20px"></div>
+      <pre id="p-atributos-json" style="margin:6px 0 0;padding:6px;background:#020617;border:1px solid #1e293b;border-radius:6px;font-size:10px;max-height:120px;overflow:auto;white-space:pre-wrap"></pre>
+    </div>
     <div class="percepcion-controls">
       <button id="p-start">Iniciar cámara</button>
       <button id="p-mock">Mock boxes</button>
@@ -202,6 +210,54 @@ function initPercepcion() {
     countEl,
   });
 
+  // S4-B panel AtributoVista filtrable + JSON + TTL
+  const filterEl = percepcion.querySelector("#p-filter");
+  const atributosListEl = percepcion.querySelector("#p-atributos-list");
+  const atributosJsonEl = percepcion.querySelector("#p-atributos-json");
+  const ttlEl = percepcion.querySelector("#p-ttl");
+  let lastAtributos = [];
+  function renderAtributos() {
+    if (!atributosListEl || !atributosJsonEl) return;
+    const q = (filterEl?.value || "").toLowerCase().trim();
+    // S4-C relaciones espaciales: si q contiene izquierda/derecha + taza, ordenar por x_c
+    let filtered;
+    if (q.includes("izquierda") || q.includes("derecha")) {
+      const cup = lastAtributos.find((a) => String(a.cls).toLowerCase() === "cup");
+      const sorted = [...lastAtributos].sort((a, b) => Number(a.centroide?.x_c ?? a.x ?? 0) - Number(b.centroide?.x_c ?? b.x ?? 0));
+      if (cup) {
+        const cupX = Number(cup.centroide?.x_c ?? cup.x ?? 0.5);
+        if (q.includes("izquierda")) filtered = sorted.filter((a) => Number(a.centroide?.x_c ?? a.x ?? 0) < cupX);
+        else filtered = sorted.filter((a) => Number(a.centroide?.x_c ?? a.x ?? 0) > cupX);
+        if (!filtered.length) filtered = sorted;
+      } else {
+        filtered = sorted;
+      }
+    } else {
+      filtered = !q ? lastAtributos : lastAtributos.filter((a) => {
+        const col = String(a.color || a.color_hsv || "").toLowerCase();
+        const tam = String(a.tamano || "").toLowerCase();
+        const cls = String(a.cls || "").toLowerCase();
+        const z = a.z_rel !== null && a.z_rel !== undefined ? (a.z_rel < 0.45 ? "cerca" : a.z_rel < 0.65 ? "medio" : "lejos") : "";
+        return col.includes(q) || tam.includes(q) || cls.includes(q) || z.includes(q);
+      });
+    }
+    atributosListEl.innerHTML = "";
+    for (const a of filtered.slice(0, 8)) {
+      const span = document.createElement("span");
+      const z = a.z_rel !== null && a.z_rel !== undefined ? ` z${Number(a.z_rel).toFixed(2)}` : "";
+      span.textContent = `#${a.track_id ?? "?"} ${a.cls} ${a.color} ${a.tamano}${z}`;
+      span.style.cssText = "padding:2px 6px;border-radius:999px;background:#16213a;border:1px solid #334155;font-size:10px;color:#94a3b8";
+      atributosListEl.appendChild(span);
+    }
+    if (ttlEl) {
+      const now = Date.now();
+      const age = lastAtributos.length ? `${now - (lastAtributos[0].ts || now)}ms` : "—";
+      ttlEl.textContent = `TTL bbox100/color200/z500 · age ${age} · ${filtered.length}/${lastAtributos.length}`;
+    }
+    try { atributosJsonEl.textContent = JSON.stringify(filtered.slice(0, 3), null, 2) || "[]"; } catch {}
+  }
+  if (filterEl) filterEl.addEventListener("input", renderAtributos);
+
   // v2 leyenda handler con debounce 1s, provider muted
   function handleSceneCaption(payload) {
     if (!payload) return;
@@ -237,6 +293,13 @@ function initPercepcion() {
     url: "ws://localhost:8000/ws/percepcion",
     onDetecciones: (payload, env) => {
       overlay.handleDetecciones(payload);
+      // S4-B: actualizar panel AtributoVista
+      try {
+        const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+        // boxes ya son AtributoVista enriquecidos (S1) con track_id/centroide/color
+        lastAtributos = boxes;
+        renderAtributos();
+      } catch {}
       try {
         enrollment.handleDetecciones(payload);
       } catch {}

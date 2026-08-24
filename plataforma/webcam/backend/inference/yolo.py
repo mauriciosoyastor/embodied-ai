@@ -299,6 +299,12 @@ class YoloDetector:
                 opts.graph_optimization_level = (
                     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 )
+                opts.intra_op_num_threads = 2
+                opts.inter_op_num_threads = 1
+                try:
+                    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL  # type: ignore
+                except Exception:
+                    pass
                 self._session = ort.InferenceSession(
                     str(model_path),
                     sess_options=opts,

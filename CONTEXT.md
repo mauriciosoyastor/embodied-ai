@@ -113,3 +113,15 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Profundidad**: `Profundidad {z_rel: float 0..1, z_m: float|null, box_center: {x,y}}` mediana 3×3 centro bbox desde `MiDaS small 256` (~42ms) 5Hz piggyback; `intra_op_num_threads=2` + `asyncio.to_thread` paralelo sin jitter.
 - **LeyendaEscena**: `LeyendaEscena {caption: str es-AR 1 frase, objects: [str], conf, ts}` vía VLM 1Hz `scene_caption` separado (leaky-skip 1/30) cadena `Groq llama-4-scout → HF Qwen2.5-VL → Gemini 2.0 Flash → mock` (~300ms p50).
 - **ABORTED overlay-only v2**: en `ABORTED` latch todos los canales v2 (postura/profundidad/caption) solo pintan `overlay.js`/`percepcion-panel` sin mutar `WhiteboardState`.
+
+## Términos de Percepción descriptiva interactiva (Mapa #88 S1 — AtributoVista)
+
+- **Whitelist W30**: `YOLO_WHITELIST` 30 clases curadas indoor (`person, chair, couch, bottle, cup, cell phone, laptop, keyboard, mouse, book, backpack, handbag, remote` + `tv, bed, dining table, toilet, potted plant, microwave, oven, sink, refrigerator, clock, vase, toaster, wine glass, bowl, scissors, teddy bear, toothbrush`) filtradas en `ws.py:204 _passes_whitelist`; mismo `yolo11n.onnx` 10.4MB, 105ms Glass, +105% cobertura vs 13 sin coste; `W80` completo reservado outdoor.
+- **AtributoVista**: `WhiteboardState.percepcion_vista.atributos: list[AtributoVista]` con `track_id, cls, conf, bbox {x,y,w,h}, centroide {x_c,y_c}, tamano pequeño/mediano/grande + area, z_rel/z_m, color_hsv/color_hsv_hex/color_vlm/color, frame_id, ts, ttl_ms {bbox:100,color_hsv:200,z_rel:500,color_vlm:3000}`; producido por `ws.py:_extract_atributos` tras `_passes_whitelist`; `YoloDetector` con `intra_op_num_threads=2` unificado (`yolo.py:300`). TTL `atributos 200ms / z 500ms`, single-writer memoria, `update_percepcion(atributos=...)` respeta `ABORTED` guarda dura.
+- **Centroide**: `x_c = x+w/2, y_c = y+h/2` normalizado [0,1] por bbox; permite ordenamiento espacial CPU para "¿qué hay a la izquierda de la taza?".
+- **Tamaño**: `area=w*h` → `pequeño <0.05 < mediano <0.15 < grande` (G2); sin inferencia.
+- **Color HSV**: histograma 18 bins H con máscara `S>50 V>50` sobre crop bbox (<0.1ms), 12 colores + gris/blanco/negro/unknown + hex; `color = color_vlm if fresh else color_hsv`.
+- **ByteTrack**: MOT IoU greedy ligero `tracker.py:38` con `max_age=30` + `iou_threshold=0.5`, `track_id` persistente <1ms; `LRUCache 64` `IoU>0.85` TTL 2s evita recalcular `color_hsv` (`hit_ratio` OTel).
+- **Zero-Copy**: `ws.py:636` `receiver` guarda `img_view` por referencia en `slow_queue` 1Hz sin re-serializar Base64; crops `img[y1:y2,x1:x2]` son `memoryview` view.
+- **Thread Pinning**: `onnxruntime SessionOptions intra_op=2 inter_op=1 OMP_NUM_THREADS=2 ORT_SEQUENTIAL` unificado en `yolo.py:302`/`depth.py`/`pose.py` para aislar inferencia vs ByteTrack/HSV.
+- **OTel / Prometheus**: `GET /metrics` `metrics.py:38` expone `cache_hit_ratio`, `cache_hits/misses`, `ttl_expirations{field}`, `glass_to_glass_p50/p95_ms`, `yolo_infer_p50_ms` para `ws.py` leaky y TTL.

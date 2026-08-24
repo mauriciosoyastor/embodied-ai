@@ -19,6 +19,40 @@ LEAKY_QUEUE_SIZE: int = 1
 WS_BUFFERED_AMOUNT_LIMIT: int = 64 * 1024  # 64KB
 JPEG_QUALITY: int = 75
 MAX_FRAME_SIZE: int = 640
+# S2-A scaffold — MOT + LRU (mapa #88 G1/G2)
+TRACK_MAX_AGE: int = 30
+TRACK_IOU_THRESHOLD: float = 0.5
+LRU_SIZE: int = 64
+LRU_TTL_MS: int = 2000
+# OTel / ThreadPinning S2
+OTEL_ENABLED: bool = True
+ONNX_INTRA_OP: int = 2
+ONNX_INTER_OP: int = 1
+# S3 — PromptList W30 / World-s (mapa #88 G1/G2)
+YOLO_WORLD_ENABLED: bool = False
+YOLO_WORLD_DYNAMIC_BY_VOZ: bool = False
+YOLO_WORLD_PROMPTLIST_STATIC: list[str] = [
+    "person",
+    "chair",
+    "couch",
+    "dining table",
+    "bed",
+    "toilet",
+    "tv",
+    "laptop",
+    "keyboard",
+    "mouse",
+    "cell phone",
+    "remote",
+    "bottle",
+    "cup",
+    "wine glass",
+    "bowl",
+    "book",
+    "backpack",
+    "handbag",
+    "potted plant",
+]
 
 YOLO_WHITELIST: frozenset[str] = frozenset(
     {
@@ -35,5 +69,23 @@ YOLO_WHITELIST: frozenset[str] = frozenset(
         "backpack",
         "handbag",
         "remote",
+        # W30 curada indoor (R2 + mapa #88 G1) — mismo yolo11n.onnx sin coste
+        "tv",
+        "bed",
+        "dining table",
+        "toilet",
+        "potted plant",
+        "microwave",
+        "oven",
+        "sink",
+        "refrigerator",
+        "clock",
+        "vase",
+        "toaster",
+        "wine glass",
+        "bowl",
+        "scissors",
+        "teddy bear",
+        "toothbrush",
     }
 )
