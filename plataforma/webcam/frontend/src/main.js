@@ -78,6 +78,11 @@ function createPercepcionDOM() {
       <div><span>infer</span><b id="p-infer">—</b></div>
       <div><span>det</span><b id="p-count">0 obj</b></div>
     </div>
+    <div id="p-leyenda" class="percepcion-leyenda" style="margin-top:8px;padding:8px;border:1px solid #1e293b;border-radius:6px;background:#020617;min-height:36px">
+      <div id="p-caption" style="font-size:11px;color:#e2e8f0;line-height:1.3;min-height:14px">—</div>
+      <div id="p-objects" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px"></div>
+      <span id="p-provider" style="font-size:9px;color:#475569;opacity:0.7"></span>
+    </div>
     <div class="percepcion-controls">
       <button id="p-start">Iniciar cámara</button>
       <button id="p-mock">Mock boxes</button>
@@ -179,6 +184,11 @@ function initPercepcion() {
   const placeholder = percepcion.querySelector("#cam-placeholder");
   const startBtn = percepcion.querySelector("#p-start");
   const mockBtn = percepcion.querySelector("#p-mock");
+  // v2 leyenda escena 1Hz debounce
+  const captionEl = percepcion.querySelector("#p-caption");
+  const objectsEl = percepcion.querySelector("#p-objects");
+  const providerEl = percepcion.querySelector("#p-provider");
+  let lastCaptionTs = 0;
 
   webcam.video = video;
   webcam.cam = cam;
@@ -191,6 +201,37 @@ function initPercepcion() {
     inferEl,
     countEl,
   });
+
+  // v2 leyenda handler con debounce 1s, provider muted
+  function handleSceneCaption(payload) {
+    if (!payload) return;
+    const now = Date.now();
+    if (now - lastCaptionTs < 1000) return; // debounce 1s 1Hz
+    lastCaptionTs = now;
+    try {
+      overlay.handleSceneCaption?.(payload);
+    } catch {}
+    if (captionEl) {
+      const cap = String(payload.caption || payload.text || "—").trim() || "—";
+      captionEl.textContent = cap;
+      captionEl.title = cap;
+    }
+    if (objectsEl) {
+      objectsEl.innerHTML = "";
+      const objs = Array.isArray(payload.objects) ? payload.objects : [];
+      for (const o of objs.slice(0, 6)) {
+        const span = document.createElement("span");
+        span.textContent = String(o);
+        span.style.cssText = "padding:2px 6px;border-radius:999px;background:#16213a;border:1px solid #1e293b;font-size:10px;color:#94a3b8";
+        objectsEl.appendChild(span);
+      }
+    }
+    if (providerEl) {
+      const prov = String(payload.provider || "mock");
+      providerEl.textContent = prov === "mock" ? "· mock" : `· ${prov}`;
+      providerEl.style.opacity = "0.45";
+    }
+  }
 
   wsClient = createPerceptionClient({
     url: "ws://localhost:8000/ws/percepcion",
@@ -215,6 +256,7 @@ function initPercepcion() {
         enrollment.handleEstado(payload);
       } catch {}
     },
+    onSceneCaption: (payload) => handleSceneCaption(payload),
     onEnrollAck: (payload) => {
       try {
         enrollment.handleEnrollAck(payload);
@@ -324,12 +366,23 @@ function initPercepcion() {
 
   startBtn.addEventListener("click", startCamera);
   mockBtn.addEventListener("click", () => {
-    // mock sin backend: dibuja boxes demo y gesto random
+    // mock sin backend: dibuja boxes demo y gesto random + v2 poses/depths/caption
     const demoBoxes = [
       { x: 0.2, y: 0.2, w: 0.25, h: 0.4, cls: "person", conf: 0.92 },
       { x: 0.55, y: 0.3, w: 0.18, h: 0.22, cls: "chair", conf: 0.71 },
     ];
-    overlay.drawBoxes(demoBoxes);
+    // pose mock 17 kps centrados en person box
+    const mockPose = {
+      conf: 0.9,
+      keypoints: Array.from({ length: 17 }, (_, i) => ({
+        x: 0.2 + 0.25 * (0.3 + 0.4 * Math.sin(i)),
+        y: 0.2 + 0.4 * (0.3 + 0.2 * Math.cos(i)),
+        conf: 0.9,
+      })),
+    };
+    const mockDepths = [{ z_rel: 0.42, box_center: { x: 0.325, y: 0.4 } }, { z_rel: 0.71, box_center: { x: 0.64, y: 0.41 } }];
+    overlay.handleDetecciones({ boxes: demoBoxes, poses: [mockPose], depths: mockDepths });
+    handleSceneCaption({ caption: "Una persona junto a una silla en interior.", objects: ["person", "chair"], provider: "mock", conf: 0.88 });
     try {
       enrollment.handleDetecciones({ boxes: demoBoxes });
     } catch {}
