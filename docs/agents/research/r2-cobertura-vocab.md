@@ -58,8 +58,13 @@ Código ejecutable para reproducir filtros (headless `np.zeros` sintético manti
 from plataforma.webcam.backend.config import YOLO_WHITELIST, YOLO_CONF, YOLO_AREA_MIN
 from plataforma.webcam.backend.ws import _passes_whitelist
 from plataforma.webcam.backend.inference.yolo import Box
-Box(x=0.1,y=0.1,w=0.2,h=0.2,cls="chair",conf=0.55)  # _passes -> True (conf>0.5 area 0.04>0.03)
-Box(x=0.1,y=0.1,w=0.1,h=0.1,cls="tv",conf=0.9)       # -> False (cls no en W13 aunque conf alta)
+
+Box(
+    x=0.1, y=0.1, w=0.2, h=0.2, cls="chair", conf=0.55
+)  # _passes -> True (conf>0.5 area 0.04>0.03)
+Box(
+    x=0.1, y=0.1, w=0.1, h=0.1, cls="tv", conf=0.9
+)  # -> False (cls no en W13 aunque conf alta)
 ```
 
 ---
@@ -164,11 +169,16 @@ Paper `Cheng et al. 2024 arXiv:2401.17270 CVPR2024`: YOLOv8 + vision-language (C
 
 ```python
 from ultralytics import YOLOWorld
+
 model = YOLOWorld("yolov8s-worldv2.pt")
-model.set_classes(["person","bus"])          # PromptList estática offline
-model.set_classes(["taza roja con asa","destornillador amarillo","control remoto negro"])
-results = model.predict("image.jpg")        # zero-shot con offline vocab
-model.save("custom_yolov8s.pt")             # re-parametriza embeddings → YOLO cerrado custom (sin text encoder)
+model.set_classes(["person", "bus"])  # PromptList estática offline
+model.set_classes(
+    ["taza roja con asa", "destornillador amarillo", "control remoto negro"]
+)
+results = model.predict("image.jpg")  # zero-shot con offline vocab
+model.save(
+    "custom_yolov8s.pt"
+)  # re-parametriza embeddings → YOLO cerrado custom (sin text encoder)
 ```
 
 **PromptList estática (recomendada default):** lista fija curada de ~20 frases indoor (ver §7) embebida en `.onnx` re-parametrizado o cargada al iniciar `YoloDetector` con `txt_feats` precomputado. Ventajas: eficiencia (sin encode por frame), determinista, testeable, sin latencia de voz.
@@ -230,12 +240,32 @@ model.save("custom_yolov8s.pt")             # re-parametriza embeddings → YOLO
 ```python
 # backend/config.py — propuesta para G1 (no aplicar aún, documentar)
 YOLO_WORLD_PROMPTLIST_STATIC: list[str] = [
-    "person", "chair", "couch", "dining table", "bed", "toilet",
-    "tv", "laptop", "keyboard", "mouse", "cell phone", "remote",
-    "bottle", "cup", "wine glass", "bowl", "book", "backpack", "handbag",
-    "potted plant", "vase", "clock",  # 22 (cortar a 20 si mem)
+    "person",
+    "chair",
+    "couch",
+    "dining table",
+    "bed",
+    "toilet",
+    "tv",
+    "laptop",
+    "keyboard",
+    "mouse",
+    "cell phone",
+    "remote",
+    "bottle",
+    "cup",
+    "wine glass",
+    "bowl",
+    "book",
+    "backpack",
+    "handbag",
+    "potted plant",
+    "vase",
+    "clock",  # 22 (cortar a 20 si mem)
     # frases compuestas que W80 no puede:
-    "red cup", "yellow screwdriver", "black remote control"
+    "red cup",
+    "yellow screwdriver",
+    "black remote control",
 ]
 # Real: usar inglés ("red cup with handle") — CLIP anglo. Traducir en voz a "taza roja con asa"
 ```
