@@ -35,5 +35,23 @@ YOLO_WHITELIST: frozenset[str] = frozenset(
         "backpack",
         "handbag",
         "remote",
+        # W30 curada indoor (R2 + mapa #88 G1) — mismo yolo11n.onnx sin coste
+        "tv",
+        "bed",
+        "dining table",
+        "toilet",
+        "potted plant",
+        "microwave",
+        "oven",
+        "sink",
+        "refrigerator",
+        "clock",
+        "vase",
+        "toaster",
+        "wine glass",
+        "bowl",
+        "scissors",
+        "teddy bear",
+        "toothbrush",
     }
 )

@@ -215,6 +215,159 @@ def _passes_whitelist(box: Any) -> bool:
     return conf >= YOLO_CONF and area >= YOLO_AREA_MIN
 
 
+# --- AtributoVista helpers S1 (HSV <1ms, sin red) ---
+
+_HSV_BINS = 18
+_HSV_COLOR_NAMES = [
+    "rojo",
+    "naranja",
+    "amarillo",
+    "verde",
+    "cian",
+    "azul",
+    "violeta",
+    "magenta",
+    "rojo",
+    "rojo",
+    "naranja",
+    "amarillo",
+    "verde",
+    "cian",
+    "azul",
+    "violeta",
+    "magenta",
+    "rojo",
+]
+_HSV_HEX = {
+    "rojo": "#c0392b",
+    "naranja": "#e67e22",
+    "amarillo": "#f1c40f",
+    "verde": "#27ae60",
+    "cian": "#1abc9c",
+    "azul": "#2980b9",
+    "violeta": "#8e44ad",
+    "magenta": "#d252b2",
+    "gris": "#7f8c8d",
+    "blanco": "#ecf0f1",
+    "negro": "#1a1a1a",
+    "unknown": "#64748b",
+}
+
+
+def _tamano_from_area(area: float) -> str:
+    if area < 0.05:
+        return "pequeño"
+    if area < 0.15:
+        return "mediano"
+    return "grande"
+
+
+def _color_hsv_from_crop(crop: Any) -> tuple[str, str]:
+    """Histograma 18 bins H con máscara S>50 V>50 — <0.1ms por crop."""
+    if crop is None:
+        return "unknown", _HSV_HEX["unknown"]
+    try:
+        import cv2
+        import numpy as np
+
+        if crop.size == 0:
+            return "unknown", _HSV_HEX["unknown"]
+        # stats para grises
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        # máscara saturación/valor
+        mask = ((hsv[:, :, 1] > 50) & (hsv[:, :, 2] > 50)).astype(np.uint8) * 255
+        # grises/blanco/negro si poca saturación
+        mean_s = float(np.mean(hsv[:, :, 1]))
+        mean_v = float(np.mean(hsv[:, :, 2]))
+        if mean_s < 35 and mean_v > 200:
+            return "blanco", _HSV_HEX["blanco"]
+        if mean_v < 40:
+            return "negro", _HSV_HEX["negro"]
+        if mean_s < 25:
+            return "gris", _HSV_HEX["gris"]
+        hist = cv2.calcHist([hsv], [0], mask, [_HSV_BINS], [0, 180])
+        if hist is None or hist.size == 0 or float(np.sum(hist)) < 10:
+            return "gris", _HSV_HEX["gris"]
+        dom = int(np.argmax(hist))
+        name = _HSV_COLOR_NAMES[dom % len(_HSV_COLOR_NAMES)]
+        return name, _HSV_HEX.get(name, _HSV_HEX["unknown"])
+    except Exception:
+        return "unknown", _HSV_HEX["unknown"]
+
+
+def _extract_atributos(
+    boxes: list[Any],
+    img: Any | None,
+    frame_id: int,
+    ts: int,
+) -> list[dict[str, Any]]:
+    """Construye AtributoVista dicts serializables para Envelope detec./Whiteboard."""
+    out: list[dict[str, Any]] = []
+    for idx, b in enumerate(boxes):
+        x = max(0.0, min(1.0, float(getattr(b, "x", 0.0))))
+        y = max(0.0, min(1.0, float(getattr(b, "y", 0.0))))
+        w = max(0.0, min(1.0, float(getattr(b, "w", 0.0))))
+        h = max(0.0, min(1.0, float(getattr(b, "h", 0.0))))
+        cls = str(getattr(b, "cls", ""))
+        conf = max(0.0, min(1.0, float(getattr(b, "conf", 0.0))))
+        area = max(0.0, w) * max(0.0, h)
+        tamano = _tamano_from_area(area)
+        centroide = {
+            "x_c": max(0.0, min(1.0, x + w / 2.0)),
+            "y_c": max(0.0, min(1.0, y + h / 2.0)),
+        }
+        bbox = {"x": x, "y": y, "w": w, "h": h}
+        # crop para color
+        color_name: str = "unknown"
+        color_hex: str = _HSV_HEX["unknown"]
+        if img is not None:
+            try:
+                ih, iw = img.shape[:2]
+                x1 = int(round(x * iw))
+                y1 = int(round(y * ih))
+                x2 = int(round((x + w) * iw))
+                y2 = int(round((y + h) * ih))
+                x1, x2 = max(0, x1), min(iw, x2)
+                y1, y2 = max(0, y1), min(ih, y2)
+                if x2 > x1 and y2 > y1:
+                    crop = img[y1:y2, x1:x2]
+                    color_name, color_hex = _color_hsv_from_crop(crop)
+            except Exception:
+                pass
+        # z_rel null en S1 (depth piggyback en slow_processor)
+        out.append(
+            {
+                "track_id": idx,
+                "cls": cls,
+                "conf": conf,
+                "bbox": bbox,
+                "centroide": centroide,
+                "tamano": tamano,
+                "area": area,
+                "z_rel": None,
+                "z_m": None,
+                "color_hsv": color_name,
+                "color_hsv_hex": color_hex,
+                "color_vlm": None,
+                "color": color_name,
+                "frame_id": frame_id,
+                "ts": ts,
+                "ttl_ms": {
+                    "bbox": 100,
+                    "color_hsv": 200,
+                    "z_rel": 500,
+                    "color_vlm": 3000,
+                },
+                # compat flat para overlay.js ya existente
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+            }
+        )
+    return out
+
+
 def run_inference(
     jpeg_b64: str,
     frame_id: int,
@@ -224,10 +377,12 @@ def run_inference(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Ejecuta YOLO + gesto stub y retorna payloads serializados.
 
-     Returns: (boxes_payload_list, gesto_payload)
+    Returns: (boxes_payload_list, gesto_payload)
     _boxes coords normalizadas [0,1]; cls=str COCO; conf 0-1
-     gesto label ∈ allowed, conf 0-1
-     Filtra por whitelist + conf/area antes de serializar (v2).
+    gesto label ∈ allowed, conf 0-1
+    Filtra por whitelist + conf/area antes de serializar (v2).
+    S1: cada box incluye AtributoVista
+        (centroide, tamano, area, color_hsv, z_rel) para compat.
     """
     _ = width
     _ = height
@@ -237,19 +392,12 @@ def run_inference(
 
     # YOLO
     boxes = yolo.predict(img)
-    boxes_payload: list[dict[str, Any]] = []
-    for b in boxes:
-        if not _passes_whitelist(b):
-            continue
-        # clamp normalizado [0,1] — defensa serialización
-        x = max(0.0, min(1.0, float(b.x)))
-        y = max(0.0, min(1.0, float(b.y)))
-        w = max(0.0, min(1.0, float(b.w)))
-        h = max(0.0, min(1.0, float(b.h)))
-        conf = max(0.0, min(1.0, float(b.conf)))
-        boxes_payload.append(
-            {"x": x, "y": y, "w": w, "h": h, "cls": str(b.cls), "conf": conf}
-        )
+    # filtra whitelist primero
+    filtered: list[Any] = [b for b in boxes if _passes_whitelist(b)]
+    # AtributoVista enriquecido S1 (incluye compat flat x/y/w/h)
+    boxes_payload: list[dict[str, Any]] = _extract_atributos(
+        filtered, img, frame_id, ts
+    )
 
     # Gesto — mapea GestoReconocido → payload wire
     gesto_event: GestoReconocido = gesture_rec.recognize(
