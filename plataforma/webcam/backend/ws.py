@@ -300,8 +300,20 @@ def _extract_atributos(
     img: Any | None,
     frame_id: int,
     ts: int,
+    track_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Construye AtributoVista dicts serializables para Envelope detec./Whiteboard."""
+    # S2-B: LRU cache por track_id + IoU>0.85 evita recalcular HSV
+    try:
+        from plataforma.webcam.backend.tracker import (
+            get_tracker,  # local import evita ciclo
+        )
+
+        tracker = get_tracker()
+        lru = tracker.lru
+    except Exception:
+        tracker = None  # type: ignore
+        lru = None  # type: ignore
     out: list[dict[str, Any]] = []
     for idx, b in enumerate(boxes):
         x = max(0.0, min(1.0, float(getattr(b, "x", 0.0))))
@@ -317,10 +329,21 @@ def _extract_atributos(
             "y_c": max(0.0, min(1.0, y + h / 2.0)),
         }
         bbox = {"x": x, "y": y, "w": w, "h": h}
-        # crop para color
+        # S2-B: track_id persistente vía ByteTrack, fallback idx
+        track_id = int(track_ids[idx]) if track_ids and idx < len(track_ids) else idx
+        # crop para color — LRU hit evita histograma
         color_name: str = "unknown"
         color_hex: str = _HSV_HEX["unknown"]
-        if img is not None:
+        cached = None
+        if lru is not None:
+            try:
+                cached = lru.get(track_id, bbox, now_ms=ts)
+            except Exception:
+                cached = None
+        if cached is not None:
+            color_name = str(cached.get("color_hsv", "unknown"))
+            color_hex = str(cached.get("color_hex", _HSV_HEX["unknown"]))
+        elif img is not None:
             try:
                 ih, iw = img.shape[:2]
                 x1 = int(round(x * iw))
@@ -332,12 +355,17 @@ def _extract_atributos(
                 if x2 > x1 and y2 > y1:
                     crop = img[y1:y2, x1:x2]
                     color_name, color_hex = _color_hsv_from_crop(crop)
+                    if lru is not None:
+                        try:
+                            lru.put(track_id, bbox, color_name, color_hex, ts=ts)
+                        except Exception:
+                            pass
             except Exception:
                 pass
         # z_rel null en S1 (depth piggyback en slow_processor)
         out.append(
             {
-                "track_id": idx,
+                "track_id": track_id,
                 "cls": cls,
                 "conf": conf,
                 "bbox": bbox,
@@ -394,9 +422,17 @@ def run_inference(
     boxes = yolo.predict(img)
     # filtra whitelist primero
     filtered: list[Any] = [b for b in boxes if _passes_whitelist(b)]
-    # AtributoVista enriquecido S1 (incluye compat flat x/y/w/h)
+    # S2-B: track_id persistente ByteTrack IoU>0.5 edad 30
+    try:
+        from plataforma.webcam.backend.tracker import get_tracker
+
+        tracker = get_tracker()
+        track_ids = tracker.update(filtered)
+    except Exception:
+        track_ids = list(range(len(filtered)))
+    # AtributoVista enriquecido S1+S2-B (incluye compat flat x/y/w/h + LRU)
     boxes_payload: list[dict[str, Any]] = _extract_atributos(
-        filtered, img, frame_id, ts
+        filtered, img, frame_id, ts, track_ids=track_ids
     )
 
     # Gesto — mapea GestoReconocido → payload wire
