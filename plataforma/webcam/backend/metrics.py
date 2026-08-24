@@ -15,6 +15,10 @@ _cache_misses: int = 0
 _ttl_expirations: Counter[str] = Counter()
 _glass_samples: list[float] = []
 _yolo_samples: list[float] = []
+_inference_samples: list[float] = []
+_total_samples: list[float] = []
+_fps_samples: list[float] = []
+_dropped_frames_total: int = 0
 _start_ms: int = int(time.time() * 1000)
 
 
@@ -42,6 +46,29 @@ def record_yolo(ms: float) -> None:
     _yolo_samples.append(float(ms))
     if len(_yolo_samples) > 200:
         _yolo_samples.pop(0)
+
+
+def record_inference(ms: float) -> None:
+    _inference_samples.append(float(ms))
+    if len(_inference_samples) > 200:
+        _inference_samples.pop(0)
+
+
+def record_total(ms: float) -> None:
+    _total_samples.append(float(ms))
+    if len(_total_samples) > 200:
+        _total_samples.pop(0)
+
+
+def record_fps(fps: float) -> None:
+    _fps_samples.append(float(fps))
+    if len(_fps_samples) > 200:
+        _fps_samples.pop(0)
+
+
+def record_dropped_frame(n: int = 1) -> None:
+    global _dropped_frames_total
+    _dropped_frames_total += int(n)
 
 
 def _p50(vals: list[float]) -> float:
@@ -99,14 +126,30 @@ def render_prometheus() -> str:
     lines.append("# HELP yolo_infer_p50_ms YOLO infer p50")
     lines.append("# TYPE yolo_infer_p50_ms gauge")
     lines.append(f"yolo_infer_p50_ms {_p50(_yolo_samples):.1f}")
+    lines.append("# HELP inference_time_ms p50 total infer")
+    lines.append("# TYPE inference_time_ms gauge")
+    lines.append(f"inference_time_ms {_p50(_inference_samples):.1f}")
+    lines.append("# HELP total_time_ms p50 glass-to-glass")
+    lines.append("# TYPE total_time_ms gauge")
+    lines.append(f"total_time_ms {_p50(_total_samples):.1f}")
+    lines.append("# HELP fps gauge")
+    lines.append("# TYPE fps gauge")
+    lines.append(f"fps {_p50(_fps_samples):.1f}")
+    lines.append("# HELP dropped_frames_total LeakyQueue drops")
+    lines.append("# TYPE dropped_frames_total counter")
+    lines.append(f"dropped_frames_total {_dropped_frames_total}")
     lines.append(f"uptime_ms {int(time.time() * 1000 - _start_ms)}")
     return "\n".join(lines) + "\n"
 
 
 def reset() -> None:
-    global _cache_hits, _cache_misses
+    global _cache_hits, _cache_misses, _dropped_frames_total
     _cache_hits = 0
     _cache_misses = 0
+    _dropped_frames_total = 0
     _ttl_expirations.clear()
     _glass_samples.clear()
     _yolo_samples.clear()
+    _inference_samples.clear()
+    _total_samples.clear()
+    _fps_samples.clear()

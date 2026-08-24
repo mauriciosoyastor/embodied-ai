@@ -34,6 +34,11 @@ from plataforma.webcam.backend.inference.gesture import (
     get_gesture_recognizer,
 )
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
+from plataforma.webcam.backend.metrics import (
+    record_dropped_frame,
+    record_inference,
+    record_total,
+)
 
 # Global clients para broadcast purge (hibrido)
 connected_clients: set[WebSocketLike] = set()
@@ -116,7 +121,10 @@ def parse_envelope(raw: str) -> dict[str, Any]:
 
 
 def decode_jpeg_b64(jpeg_b64: str) -> Any | None:
-    """Decodifica JPEG base64 a ndarray si opencv disponible; None si stub."""
+    """Decodifica JPEG base64 a ndarray si opencv disponible; None si stub.
+
+    Zero-Copy (041): memoryview evita copy inter-proceso hacia np.ndarray.
+    """
     try:
         raw = base64.b64decode(jpeg_b64)
     except Exception:
@@ -125,7 +133,8 @@ def decode_jpeg_b64(jpeg_b64: str) -> Any | None:
         import cv2
         import numpy as np
 
-        arr = np.frombuffer(raw, dtype=np.uint8)
+        # Zero-Copy: memoryview no copia buffer bytes → np.frombuffer view
+        arr = np.frombuffer(memoryview(raw), dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         return img
     except Exception:
@@ -665,7 +674,12 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
             if typ != "frame":
                 continue
             # Leaky: si llega nuevo antes de consumir, descarta anterior
-            await fast_queue.put(payload)
+            dropped_fast = await fast_queue.put(payload)
+            if dropped_fast:
+                try:
+                    record_dropped_frame(1)
+                except Exception:
+                    pass
             # S2-C Zero-Copy: slow_queue guarda referencia img_view sin Base64 copy
             try:
                 jpeg_b64_slow = str(payload.get("jpeg_b64", ""))
@@ -678,9 +692,19 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 # view por referencia — no serializa Base64 de nuevo en slow path
                 payload_slow["img_view"] = img_view  # type: ignore
                 payload_slow["_zero_copy"] = True  # type: ignore
-                await slow_queue.put(payload_slow)
+                dropped_slow = await slow_queue.put(payload_slow)
+                if dropped_slow:
+                    try:
+                        record_dropped_frame(1)
+                    except Exception:
+                        pass
             except Exception:
-                await slow_queue.put(payload)
+                dropped_fallback = await slow_queue.put(payload)
+                if dropped_fallback:
+                    try:
+                        record_dropped_frame(1)
+                    except Exception:
+                        pass
 
     async def fast_processor() -> None:
         while True:
@@ -702,14 +726,24 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 w_int = int(width) if isinstance(width, int) else None
                 h_int = int(height) if isinstance(height, int) else None
                 ts = now_ms()
-                # run_inference es sync; ejecutarlo directo (CPU <35ms)
-                boxes_payload, gesto_payload = run_inference(
-                    jpeg_b64=jpeg_b64,
-                    frame_id=frame_id,
-                    ts=ts,
-                    width=w_int,
-                    height=h_int,
+                # 041: to_thread libera loop sin pool 4 hilos
+                infer_start = time.perf_counter()
+                total_start = infer_start
+                boxes_payload, gesto_payload = await asyncio.to_thread(
+                    run_inference,
+                    jpeg_b64,
+                    frame_id,
+                    ts,
+                    w_int,
+                    h_int,
                 )
+                try:
+                    infer_ms = (time.perf_counter() - infer_start) * 1000.0
+                    total_ms = (time.perf_counter() - total_start) * 1000.0
+                    record_inference(infer_ms)
+                    record_total(total_ms)
+                except Exception:
+                    pass
                 # S3 — anclaje voz frame_id + actualizar global last_atributos
                 try:
                     global last_atributos, last_frame_id, last_ts

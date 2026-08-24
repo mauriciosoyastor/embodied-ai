@@ -139,3 +139,14 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Zero-Copy**: `ws.py:636` `receiver` guarda `img_view` por referencia en `slow_queue` 1Hz sin re-serializar Base64; crops `img[y1:y2,x1:x2]` son `memoryview` view.
 - **Thread Pinning**: `onnxruntime SessionOptions intra_op=2 inter_op=1 OMP_NUM_THREADS=2 ORT_SEQUENTIAL` unificado en `yolo.py:302`/`depth.py`/`pose.py` para aislar inferencia vs ByteTrack/HSV.
 - **OTel / Prometheus**: `GET /metrics` `metrics.py:38` expone `cache_hit_ratio`, `cache_hits/misses`, `ttl_expirations{field}`, `glass_to_glass_p50/p95_ms`, `yolo_infer_p50_ms` para `ws.py` leaky y TTL.
+
+## Términos de arquitectura productiva (Mapa 007 — Leaky + ReID + Bridge + WebRTC)
+
+- **Bypass Galería**: rama `enroll_sync`/`purge` fuera de `AsyncLeakyQueue N=1` vía canal síncrono `ws.py:654` + `asyncio.Lock` + `store` atomic `tmp→replace` + `PendingSync localStorage:webcam.pending_sync` + `connected_clients` broadcast — evita pérdida persistencia durante `frame drops`.
+- **Single-Writer proyección**: `WhiteboardState.last_identidades: list[IdentidadVista]|None` es proyección lectura para `overlay.js handleIdentidades` y `DecisionAgentica` contexto personalización, no afecta `ActNode → send_cmd_vel` bucle reactivo; `ABORTED overlay-only` no muta `Whiteboard`.
+- **GzAdapter agnóstico**: `plataforma/sim/gazebo_adapter.py:1 GzAdapter(SimAdapter)` con `_FakeGzTransport` mock `CmdVel→Twist@gz.msgs.Twist ROS_TO_GZ` `/model/turtlebot/cmd_vel` + `Odometry GZ_TO_ROS`, intercambiable `FakeGzTransport ↔ MujocoAdapter ↔ Gazebo Transport` sin cambios caller.
+- **selectTransport fallback**: `frontend/src/ws-client.js:173 selectTransport()` probe `HEAD https://<JETSON-IP>:8554/webrtc/signal 200→webrtc else ws` (041 Q2 C + 040) — `WS D5` baseline `x86/WSL2/CI` + `webrtc://@:8554` Jetson `nvh264dec` con `fallback` sin `buffer bloat`.
+- **Warmup ONNX**: `YoloDetector.warmup(10)` dummy `1×3×640×640` en `app.py lifespan` compila grafos ONNX/TensorRT amortiza `p99 120ms` cold-start (041).
+- **Zero-Copy memoryview**: `ws.py:118 decode_jpeg_b64` usa `memoryview(raw)` → `np.frombuffer` view sin copy inter-proceso hacia `np.ndarray` (041).
+- **Dropped frames**: `metrics.py dropped_frames_total` counter `record_dropped_frame()` incrementado en `receiver` cuando `AsyncLeakyQueue.put` retorna `discarded=True` (fast/slow), expuesto `GET /metrics`.
+- **threshold_per_person**: `IdentidadVista.threshold_per_person?: float|null` debug opcional `0.42-0.65` per-person calibrado, `None` si `0.42` fijo (042 Fase1) — no rompe wire `detecciones.identities`.

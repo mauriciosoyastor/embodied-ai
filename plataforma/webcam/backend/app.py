@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Gesture stub activo — model ausente (lazy)")
         else:
             logger.info("Gesture cargado: %s", gesture.model_path)
+        # Warmup ONNX/TensorRT — amortiza cold-start p99 120ms (041)
+        try:
+            if not yolo.is_stub:
+                yolo.warmup(10)
+                logger.info("YOLO warmup(10) ok")
+        except Exception as exc:  # pragma: no cover
+            logger.warning("YOLO warmup falló: %s", exc)
         # Hidratar identities.json (hibrido)
         ids = await store.load()
         logger.info("Identities cargadas: %d", len(ids))
