@@ -16,13 +16,19 @@ import urllib.error
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# Modelos oficiales (Ultralytics + Google AI Edge)
+# Modelos oficiales (Ultralytics + Google AI Edge + MiDaS)
 # ---------------------------------------------------------------------------
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx"
 HAND_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
+# MiDaS small 256 — ONNX oficial Heliosoph (EfficientNet-Lite3, 256x256)
+# Fuente: https://huggingface.co/Heliosoph/midas-small-onnx (80 MB fp32)
+# Alternativa pt: https://github.com/isl-org/MiDaS/releases/download/v2_1/midas_v21_small_256.pt
+# Nota: si no hay ONNX directo, descargar pt requiere export torch.onnx — se deja
+# placeholder con hash idempotente y arg --depth-url para override en CI/local.
+DEPTH_URL = "https://huggingface.co/Heliosoph/midas-small-onnx/resolve/main/midas_v21_small_256.onnx"
 # Visión viva 036 — frontend/public/models/ (BlazeFace + mobilefacenet)
 BLAZE_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
@@ -42,11 +48,13 @@ MOBILEFACENET_URL = ""
 EXPECTED_SHA256: dict[str, str | None] = {
     "yolo11n.onnx": None,
     "hand_landmarker.task": None,
+    "midas_small_256.onnx": None,
 }
 
 MODELS: dict[str, dict[str, str]] = {
     "yolo11n.onnx": {"url": YOLO_URL},
     "hand_landmarker.task": {"url": HAND_URL},
+    "midas_small_256.onnx": {"url": DEPTH_URL},
 }
 
 # Modelos frontend visión viva (036) — destino frontend/public/models/
@@ -165,6 +173,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="re-descarga aunque ya exista")
     p.add_argument("--yolo-url", default=YOLO_URL, help="override URL yolo11n.onnx")
     p.add_argument(
+        "--depth-url", default=DEPTH_URL, help="override URL midas_small_256.onnx"
+    )
+    p.add_argument(
         "--hand-url", default=HAND_URL, help="override URL hand_landmarker.task"
     )
     p.add_argument(
@@ -194,13 +205,23 @@ def main(argv: list[str] | None = None) -> int:
     # overrides de URL si se pasan por CLI
     urls: dict[str, str] = {
         "yolo11n.onnx": args.yolo_url,
+        "midas_small_256.onnx": args.depth_url,
         "hand_landmarker.task": args.hand_url,
     }
 
     ok = True
-    for filename in ("yolo11n.onnx", "hand_landmarker.task"):
+    for filename in ("yolo11n.onnx", "midas_small_256.onnx", "hand_landmarker.task"):
         url = urls[filename]
         dest = models_dir / filename
+        if not url:
+            if dest.exists():
+                print(f"[SKIP] {filename} presente ({dest.stat().st_size:,} bytes)")
+            else:
+                print(
+                    f"[DEUDA] {filename} sin fuente pública verificada "
+                    "(stub fallback activo — ver DEPTH_URL)"
+                )
+            continue
         expected = EXPECTED_SHA256.get(filename)
         # sin --verify-hash no exigimos hash estricto
         # download_one ya loguea; con --verify-hash el mismatch causa re-descarga

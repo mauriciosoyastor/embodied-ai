@@ -1,9 +1,11 @@
-"""Configuración del módulo webcam — umbrales S2-A/B."""
+"""Configuración del módulo webcam — umbrales S2-A/B + profundidad MiDaS."""
 
 from __future__ import annotations
 
 YOLO_CONF: float = 0.5
 GESTURE_CONF: float = 0.7
+DEPTH_CONF: float = 0.5
+DEPTH_ENABLED: bool = True
 YOLO_MAX_HZ: int = 10
 GESTURE_MAX_HZ: int = 30
 LEAKY_QUEUE_SIZE: int = 1
