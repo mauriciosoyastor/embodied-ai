@@ -1,4 +1,4 @@
-"""Interfaz pública de inferencia — S2-A desacoplada FSM + pose/depth."""
+"""Interfaz p├║blica de inferencia ÔÇö S2-A + v2 pose/depth/VLM."""
 
 from __future__ import annotations
 
@@ -23,6 +23,11 @@ from plataforma.webcam.backend.inference.pose import (
     _postprocess_pose,
     get_pose_detector,
 )
+from plataforma.webcam.backend.inference.vlm import (
+    LeyendaEscena,
+    VLMClient,
+    get_vlm_client,
+)
 from plataforma.webcam.backend.inference.yolo import (
     Box,
     YoloDetector,
@@ -40,15 +45,18 @@ __all__ = [
     "GestoReconocido",
     "GestureRecognizer",
     "Keypoint",
+    "LeyendaEscena",
     "Pose",
     "PoseDetector",
     "Profundidad",
+    "VLMClient",
     "YoloDetector",
     "_postprocess_pose",
     "classify_gesture",
     "get_depth_estimator",
     "get_gesture_recognizer",
     "get_pose_detector",
+    "get_vlm_client",
     "get_yolo_detector",
     "letterbox",
     "non_max_suppression",
