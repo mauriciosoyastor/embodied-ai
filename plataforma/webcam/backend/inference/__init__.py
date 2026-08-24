@@ -1,7 +1,13 @@
-"""Interfaz pública de inferencia — S2-A (real) desacoplada de FSM + pose v2."""
+"""Interfaz pública de inferencia — S2-A desacoplada FSM + pose/depth."""
 
 from __future__ import annotations
 
+from plataforma.webcam.backend.inference.depth import (
+    BoxCenter,
+    DepthEstimator,
+    Profundidad,
+    get_depth_estimator,
+)
 from plataforma.webcam.backend.inference.gesture import (
     ALLOWED_LABELS,
     GestoReconocido,
@@ -28,15 +34,19 @@ from plataforma.webcam.backend.inference.yolo import (
 __all__ = [
     "ALLOWED_LABELS",
     "Box",
+    "BoxCenter",
+    "DepthEstimator",
     "GestureLabel",
     "GestoReconocido",
     "GestureRecognizer",
     "Keypoint",
     "Pose",
     "PoseDetector",
+    "Profundidad",
     "YoloDetector",
     "_postprocess_pose",
     "classify_gesture",
+    "get_depth_estimator",
     "get_gesture_recognizer",
     "get_pose_detector",
     "get_yolo_detector",

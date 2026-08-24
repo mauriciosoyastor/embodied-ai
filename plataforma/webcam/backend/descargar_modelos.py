@@ -3,7 +3,7 @@
 
 Idempotente: si el archivo ya existe y (opcionalmente) su hash coincide,
 se omite la descarga salvo que se pase --force.
-No commitear pesos — ver .gitignore.
+No commitear pesos ÔÇö ver .gitignore.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# Modelos oficiales (Ultralytics + Google AI Edge)
+# Modelos oficiales (Ultralytics + Google AI Edge + MiDaS)
 # ---------------------------------------------------------------------------
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx"
 POSE_URL = (
@@ -26,35 +26,38 @@ HAND_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
-# Visión viva 036 — frontend/public/models/ (BlazeFace + mobilefacenet)
+DEPTH_URL = "https://huggingface.co/Heliosoph/midas-small-onnx/resolve/main/midas_v21_small_256.onnx"
+# Visi├│n viva 036 ÔÇö frontend/public/models/ (BlazeFace + mobilefacenet)
 BLAZE_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
 )
 
-# Deuda técnica (Opción C, 2026-08-23): no existe fuente pública verificada de
+# Deuda t├®cnica (Opci├│n C, 2026-08-23): no existe fuente p├║blica verificada de
 # mobilefacenet.onnx 128-d (onnx/models 404, HF gated/pytorch-only).
 # El fallback stubEmbedding cubre tests/CI/demo; la fuente definitiva
-# (insightface w600k_mbf.onnx es 512-d y exigiría migrar el contrato
-# embedding[128] del mapa 004) se decide en una sesión enfocada de re-id browser.
+# (insightface w600k_mbf.onnx es 512-d y exigir├¡a migrar el contrato
+# embedding[128] del mapa 004) se decide en una sesi├│n enfocada de re-id browser.
 MOBILEFACENET_URL = ""
 
 # SHA256 esperados (None = solo loguea el hash, no falla si difiere).
-# Para fijar verificación estricta, reemplazar None por el hexdigest real
-# y el script fallará si el hash descargado no coincide.
+# Para fijar verificaci├│n estricta, reemplazar None por el hexdigest real
+# y el script fallar├í si el hash descargado no coincide.
 EXPECTED_SHA256: dict[str, str | None] = {
     "yolo11n.onnx": None,
     "yolo11n-pose.onnx": None,
+    "midas_small_256.onnx": None,
     "hand_landmarker.task": None,
 }
 
 MODELS: dict[str, dict[str, str]] = {
     "yolo11n.onnx": {"url": YOLO_URL},
     "yolo11n-pose.onnx": {"url": POSE_URL},
+    "midas_small_256.onnx": {"url": DEPTH_URL},
     "hand_landmarker.task": {"url": HAND_URL},
 }
 
-# Modelos frontend visión viva (036) — destino frontend/public/models/
+# Modelos frontend visi├│n viva (036) ÔÇö destino frontend/public/models/
 FRONTEND_MODELS_DIR = (
     pathlib.Path(__file__).parents[1] / "frontend" / "public" / "models"
 )
@@ -83,7 +86,7 @@ def _verify_hash(path: pathlib.Path, expected: str | None) -> bool:
     actual = sha256_of(path)
     name = path.name
     if expected is None:
-        print(f"  SHA256({name}) = {actual} (sin hash esperado — solo informativo)")
+        print(f"  SHA256({name}) = {actual} (sin hash esperado ÔÇö solo informativo)")
         return True
     if actual.lower() == expected.lower():
         print(f"  SHA256 OK {name}: {actual}")
@@ -102,11 +105,11 @@ def download_one(
     force: bool,
     expected_sha256: str | None,
 ) -> bool:
-    """Descarga si no existe o force=True. Retorna True si ya válido/descargado."""
+    """Descarga si no existe o force=True. Retorna True si ya v├ílido/descargado."""
     if dest.exists() and not force:
         size = dest.stat().st_size
         if size == 0:
-            print(f"[WARN] {filename} existe pero está vacío — re-descargando")
+            print(f"[WARN] {filename} existe pero est├í vac├¡o ÔÇö re-descargando")
         else:
             print(f"[SKIP] {filename} ya existe ({size} bytes) en {dest}")
             if expected_sha256 is not None:
@@ -115,7 +118,7 @@ def download_one(
                 else:
                     return True
             else:
-                # sin hash esperado, verificamos que no esté corrupto informativamente
+                # sin hash esperado, verificamos que no est├® corrupto informativamente
                 _verify_hash(dest, None)
                 return True
             # si hash mismatch arriba, cae a descarga
@@ -128,7 +131,7 @@ def download_one(
         with urllib.request.urlopen(req) as resp, tmp.open("wb") as out:
             total = resp.headers.get("Content-Length")
             if total is not None:
-                print(f"  tamaño remoto: {int(total):,} bytes")
+                print(f"  tama├▒o remoto: {int(total):,} bytes")
             while True:
                 chunk = resp.read(CHUNK_SIZE)
                 if not chunk:
@@ -140,9 +143,9 @@ def download_one(
             tmp.unlink(missing_ok=True)
         return False
 
-    # validación post-descarga
+    # validaci├│n post-descarga
     if tmp.stat().st_size == 0:
-        print(f"[ERROR] archivo descargado vacío: {filename}", file=sys.stderr)
+        print(f"[ERROR] archivo descargado vac├¡o: {filename}", file=sys.stderr)
         tmp.unlink(missing_ok=True)
         return False
 
@@ -159,7 +162,7 @@ def download_one(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Descarga modelos webcam (YOLO + MediaPipe + visión viva)"
+        description="Descarga modelos webcam (YOLO + MediaPipe + visi├│n viva)"
     )
     p.add_argument(
         "--models-dir",
@@ -171,6 +174,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--yolo-url", default=YOLO_URL, help="override URL yolo11n.onnx")
     p.add_argument(
         "--pose-url", default=POSE_URL, help="override URL yolo11n-pose.onnx"
+    )
+    p.add_argument(
+        "--depth-url", default=DEPTH_URL, help="override URL midas_small_256.onnx"
     )
     p.add_argument(
         "--hand-url", default=HAND_URL, help="override URL hand_landmarker.task"
@@ -203,11 +209,17 @@ def main(argv: list[str] | None = None) -> int:
     urls: dict[str, str] = {
         "yolo11n.onnx": args.yolo_url,
         "yolo11n-pose.onnx": args.pose_url,
+        "midas_small_256.onnx": args.depth_url,
         "hand_landmarker.task": args.hand_url,
     }
 
     ok = True
-    for filename in ("yolo11n.onnx", "yolo11n-pose.onnx", "hand_landmarker.task"):
+    for filename in (
+        "yolo11n.onnx",
+        "yolo11n-pose.onnx",
+        "midas_small_256.onnx",
+        "hand_landmarker.task",
+    ):
         url = urls[filename]
         dest = models_dir / filename
         expected = EXPECTED_SHA256.get(filename)
@@ -225,8 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         success = download_one(filename, url, dest, args.force, expected)
         ok = ok and success
 
-    # frontend visión viva (036): blaze + mobilefacenet a public/models/
-    # mobilefacenet sin fuente verificada (deuda Opción C) → skip con aviso, no falla
+    # frontend visi├│n viva (036): blaze + mobilefacenet a public/models/
+    # mobilefacenet sin fuente verificada (deuda Opci├│n C) ÔåÆ skip con aviso, no falla
     if not args.skip_frontend:
         FRONTEND_MODELS_DIR.mkdir(parents=True, exist_ok=True)
         fe_urls: dict[str, str] = {
@@ -240,8 +252,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"[SKIP] {filename} presente ({dest.stat().st_size:,} bytes)")
                 else:
                     print(
-                        f"[DEUDA] {filename} sin fuente pública verificada "
-                        "(stub fallback activo — ver MOBILEFACENET_URL)"
+                        f"[DEUDA] {filename} sin fuente p├║blica verificada "
+                        "(stub fallback activo ÔÇö ver MOBILEFACENET_URL)"
                     )
                 continue
             success = download_one(filename, fe_urls[filename], dest, args.force, None)
@@ -252,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.skip_frontend:
             print("Frontend modelos en", FRONTEND_MODELS_DIR)
         return 0
-    print("\nAlgunos modelos fallaron — revisar logs", file=sys.stderr)
+    print("\nAlgunos modelos fallaron ÔÇö revisar logs", file=sys.stderr)
     return 1
 
 
