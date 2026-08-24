@@ -73,12 +73,46 @@ class LeyendaVista(BaseModel):
     frame_id: int = Field(default=0, description="frame origen")
 
 
+class AtributoVista(BaseModel):
+    """Atributo descriptivo por objeto — color/tamaño/distancia + centroide (G2)."""
+
+    track_id: int = Field(default=0, description="ByteTrack persistente, 0 si stub")
+    cls: str = Field(description="clase COCO/W30 o PromptList")
+    conf: float = Field(ge=0.0, le=1.0, description="conf 0-1")
+    bbox: dict[str, float] = Field(description="x,y,w,h normalizado [0,1]")
+    centroide: dict[str, float] = Field(description="x_c,y_c normalizado centro bbox")
+    tamano: Literal["pequeño", "mediano", "grande"] = Field(description="de area w*h")
+    area: float = Field(ge=0.0, le=1.0, description="w*h normalizado")
+    z_rel: float | None = Field(
+        default=None, description="MiDaS median 3x3 0..1, null si no depth"
+    )
+    z_m: None = Field(default=None, description="null en v1 sin calibración")
+    color_hsv: str = Field(description="12 colores + gris/blanco/negro/unknown")
+    color_hsv_hex: str = Field(description="hex #rrggbb dominante")
+    color_vlm: str | None = Field(default=None, description="VLM 1Hz libre, null si no")
+    color: str = Field(description="=color_vlm si fresh else color_hsv")
+    frame_id: int = Field(default=0, description="frame origen")
+    ts: float = Field(default=0.0, description="unix ms infer")
+    ttl_ms: dict[str, int] = Field(
+        default_factory=lambda: {
+            "bbox": 100,
+            "color_hsv": 200,
+            "z_rel": 500,
+            "color_vlm": 3000,
+        },
+        description="TTL por campo ms",
+    )
+
+
 class PercepcionVista(BaseModel):
-    """Agregado v2 — TTL por campo, single-writer memoria."""
+    """Agregado v2 — TTL por campo, single-writer memoria + AtributoVista (S1)."""
 
     frame_id: int = Field(default=0, description="tick correlación")
     detecciones: list[dict[str, float]] = Field(
-        default_factory=list, description="boxes filtradas whitelist"
+        default_factory=list, description="boxes filtradas whitelist (compat)"
+    )
+    atributos: list[AtributoVista] = Field(
+        default_factory=list, description="atributos descriptivos por objeto (S1)"
     )
     posturas: list[dict[str, object]] = Field(
         default_factory=list, description="posturas 17kp normalizados"
@@ -90,12 +124,15 @@ class PercepcionVista(BaseModel):
 
     # timestamps por campo para TTL
     ts_detecciones: float = Field(default=0.0, description="unix ms detecciones")
+    ts_atributos: float = Field(default=0.0, description="unix ms atributos")
     ts_posturas: float = Field(default=0.0, description="unix ms posturas")
     ts_profundidades: float = Field(default=0.0, description="unix ms profundidades")
     ts_leyenda: float = Field(default=0.0, description="unix ms leyenda")
 
-    # TTLs v2 (spec #81): 0.1 / 1.0 / 1.0 / 2.0 s
+    # TTLs v2 (spec #81 + G2): detecciones 0.1, atributos 0.2/0.5, posturas 1.0  # noqa: E501
     TTL_DETECCIONES: float = 0.1
+    TTL_ATRIBUTOS: float = 0.2
+    TTL_ATRIBUTOS_Z: float = 0.5
     TTL_POSTURAS: float = 1.0
     TTL_PROFUNDIDADES: float = 1.0
     TTL_LEYENDA: float = 2.0
@@ -105,7 +142,22 @@ class PercepcionVista(BaseModel):
             now = time.time()
         if not self.detecciones:
             return False
-        return (now - self.ts_detecciones) <= self.TTL_DETECCIONES
+        fresh = (now - self.ts_detecciones) <= self.TTL_DETECCIONES
+        if not fresh:
+            try:
+                from plataforma.webcam.backend.metrics import record_ttl_expiration
+
+                record_ttl_expiration("detecciones")
+            except Exception:
+                pass
+        return fresh
+
+    def is_atributos_fresh(self, now: float | None = None) -> bool:
+        if now is None:
+            now = time.time()
+        if not self.atributos:
+            return False
+        return (now - self.ts_atributos) <= self.TTL_ATRIBUTOS
 
     def is_posturas_fresh(self, now: float | None = None) -> bool:
         if now is None:
@@ -155,6 +207,7 @@ class WhiteboardState(BaseModel):
         self,
         frame_id: int | None = None,
         detecciones: list[dict[str, float]] | None = None,
+        atributos: list[AtributoVista] | list[dict[str, object]] | None = None,
         posturas: list[dict[str, object]] | None = None,
         profundidades: list[dict[str, object]] | None = None,
         leyenda: LeyendaVista | None = None,
@@ -171,6 +224,19 @@ class WhiteboardState(BaseModel):
         if detecciones is not None:
             self.percepcion_vista.detecciones = detecciones
             self.percepcion_vista.ts_detecciones = now
+        if atributos is not None:
+            # acepta AtributoVista o dict serializado
+            parsed: list[AtributoVista] = []
+            for a in atributos:
+                if isinstance(a, AtributoVista):
+                    parsed.append(a)
+                elif isinstance(a, dict):
+                    try:
+                        parsed.append(AtributoVista.model_validate(a))
+                    except Exception:
+                        continue
+            self.percepcion_vista.atributos = parsed
+            self.percepcion_vista.ts_atributos = now
         if posturas is not None:
             self.percepcion_vista.posturas = posturas
             self.percepcion_vista.ts_posturas = now

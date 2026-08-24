@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>P1 Prototipo — AtributoVista badge overlay + panel leyenda (mapa #88)</title>
+<style>
+  :root{--bg:#020617;--panel:#0b1220;--b:#1e293b;--t:#e2e8f0;--m:#94a3b8;--ok:#22c55e;--mid:#f59e0b;--lo:#64748b}
+  *{box-sizing:border-box} body{margin:0;font-family:ui-monospace,monospace;background:var(--bg);color:var(--t);display:grid;grid-template-columns:420px 1fr;gap:12px;padding:12px}
+  .panel{background:var(--panel);border:1px solid var(--b);border-radius:10px;padding:12px}
+  .h{font-size:11px;letter-spacing:0.08em;color:var(--m);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .canvas-wrap{position:relative;background:#000;border-radius:8px;overflow:hidden;border:1px solid var(--b);aspect-ratio:640/480}
+  canvas{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:4px;left:4px;font-size:10px;padding:4px 6px;border-radius:999px;background:#0b1220cc;border:1px solid #334155}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+  .chip{padding:4px 8px;border-radius:999px;border:1px solid var(--b);background:#16213a;font-size:11px;color:var(--m)}
+  .chip.on{border-color:var(--ok);color:var(--ok)} .chip.off{opacity:0.6}
+  button{padding:6px 10px;border-radius:8px;border:1px solid var(--b);background:#16213a;color:var(--t);cursor:pointer;font-size:11px}
+  button:hover{border-color:var(--ok)}
+  .q{padding:8px;border:1px solid var(--b);border-radius:8px;background:#020617;margin-top:8px}
+  .q b{font-size:11px} .q p{margin:4px 0 0;font-size:11px;color:var(--m);line-height:1.4}
+  .q .ans{color:var(--ok);font-size:12px;margin-top:6px}
+  input{width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--b);background:#020617;color:var(--t);font-size:11px}
+  .ttl{font-size:9px;color:var(--m);opacity:0.7}
+  .metric{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
+  .metric div{background:#020617;border:1px solid var(--b);border-radius:8px;padding:6px;text-align:center}
+  .metric b{font-size:10px;color:var(--m)} .metric span{font-size:13px}
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="h"><span>PERCEPCIÓN · PROTOTIPO P1 — AtributoVista</span><span style="font-size:9px;color:#22c55e">● Glass <200ms</span></div>
+  <div class="canvas-wrap" id="wrap">
+    <canvas id="cam" width="640" height="480"></canvas>
+    <canvas id="overlay" width="640" height="480" style="position:absolute;inset:0"></canvas>
+    <div class="badge" id="gesto">gesto: none · 0.00</div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div class="chip" id="fps">fps 10</div><div class="chip" id="infer">infer 38ms</div><div class="chip" id="cnt">3 obj · 2 track</div><div class="chip" id="cache" style="border-color:#22c55e">LRU hit 83%</div>
+  </div>
+  <input id="filter" placeholder="filtrar por color/distancia: rojo, cerca, mediano..." style="margin-top:8px" />
+  <div class="row" id="list"></div>
+  <div class="q">
+    <b>🎤 Simulador voz (push-to-talk)</b>
+    <p>Mantené presionado y preguntá: "¿qué ves?", "¿qué color es la taza?", "¿qué hay a la izquierda de la taza?"</p>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button id="ptt">🎙️ push-to-talk</button><button id="q1">¿qué ves?</button><button id="q2">¿color taza?</button><button id="q3">¿izquierda taza?</button>
+    </div>
+    <div class="ans" id="ans">—</div>
+    <div class="ttl" id="ttl">TTL bbox 100ms · color_hsv 200ms · z_rel 500ms · color_vlm 3000ms — frame_id anclado</div>
+  </div>
+  <div class="metric">
+    <div><b>Glass-to-Glass</b><br><span style="color:#22c55e">107ms</span><div class="ttl">YOLO11n 640 + HSV 0.4ms</div></div>
+    <div><b>WS buffered</b><br><span>32KB</span><div class="ttl"><64KB skip OK</div></div>
+    <div><b>ByteTrack</b><br><span>3 track_id</span><div class="ttl">IoU>0.85 cache</div></div>
+  </div>
+  <p class="ttl" style="margin-top:8px">Artefacto barato HITL — no toca backend. Integra decisiones R1/R2/G1/G2: W30 13→30, HSV rápido vs VLM lento, Zero-Copy, ThreadPinning intra_op2, OTel metrics.</p>
+</div>
+<div class="panel">
+  <div class="h"><span>LEYENDA · PercepcionVista (frame_id anclado)</span><span class="ttl" id="frame">frame #0042 · ts 171000</span></div>
+  <div id="leyenda" style="min-height:60px;padding:8px;border:1px solid var(--b);border-radius:8px;background:#020617;font-size:12px;line-height:1.5">Escena con <b>persona mediana</b> a 0.9m (centro), <b>taza roja mediana</b> a 0.42 (izq), <b>laptop negra grande</b> a 0.71 (der). VLM: "Una persona trabaja con taza y laptop en escritorio."</div>
+  <div class="row" id="chips"></div>
+  <div class="h" style="margin-top:10px">AtributoVista JSON (Whiteboard single-writer, sin transcript)</div>
+  <pre id="json" style="margin:0;padding:8px;background:#020617;border:1px solid var(--b);border-radius:8px;font-size:10px;overflow:auto;max-height:240px"></pre>
+  <div class="h" style="margin-top:10px">OTel / Prometheus (métricas G2)</div>
+  <pre style="margin:0;padding:8px;background:#020617;border:1px solid var(--b);border-radius:8px;font-size:10px">cache_hit_ratio 0.83
+ttl_expirations{field="color_hsv"} 12
+ttl_expirations{field="z_rel"} 3
+glass_to_glass_p50_ms 107
+glass_to_glass_p95_ms 142
+yolo_infer_p50_ms 38</pre>
+  <p class="ttl">ABORTED overlay-only: en ABORTED badge sigue pintando pero Whiteboard no muta + voz dice "estoy en ABORTED, decí reset".</p>
+</div>
+<script>
+// Mock data AtributoVista per G2 schema
+const atributos = [
+  {track_id:1, cls:"person", conf:0.92, bbox:{x:0.18,y:0.12,w:0.22,h:0.55}, centroide:{x_c:0.29,y_c:0.40}, tamaño:"mediano", area:0.121, z_rel:0.38, z_m:null, color_hsv:"piel", color_hsv_hex:"#d2a679", color_vlm:null, color:"piel", frame_id:42, ts:171000, ttl_ms:{bbox:100,color_hsv:200,z_rel:500}},
+  {track_id:7, cls:"cup", conf:0.81, bbox:{x:0.42,y:0.38,w:0.09,h:0.12}, centroide:{x_c:0.465,y_c:0.44}, tamaño:"pequeño", area:0.0108, z_rel:0.42, z_m:null, color_hsv:"rojo", color_hsv_hex:"#c0392b", color_vlm:"rojo cerámico", color:"rojo cerámico", frame_id:42, ts:171000, ttl_ms:{bbox:100,color_hsv:200,color_vlm:3000,z_rel:500}},
+  {track_id:12, cls:"laptop", conf:0.89, bbox:{x:0.58,y:0.32,w:0.28,h:0.22}, centroide:{x_c:0.72,y_c:0.43}, tamaño:"grande", area:0.061, z_rel:0.71, z_m:null, color_hsv:"negro", color_hsv_hex:"#1a1a1a", color_vlm:null, color:"negro", frame_id:42, ts:171000, ttl_ms:{bbox:100,color_hsv:200,z_rel:500}},
+];
+const COL = {piel:"#22c55e", rojo:"#e74c3c", negro:"#94a3b8"};
+function draw(){
+  const c=document.getElementById('overlay'), ctx=c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  const W=c.width,H=c.height;
+  atributos.forEach(a=>{
+    const x=a.bbox.x*W, y=a.bbox.y*H, w=a.bbox.w*W, h=a.bbox.h*H;
+    const col=COL[a.color_hsv]||"#58a6ff";
+    ctx.strokeStyle=col; ctx.lineWidth=2; ctx.strokeRect(x,y,w,h);
+    const label = `${a.cls} ${Math.round(a.conf*100)}% | ${a.color} ${a.color_hsv_hex} | ${a.tamaño} ${Math.round(a.area*100)}% | z ${a.z_rel.toFixed(2)} #${a.track_id}`;
+    ctx.font="10px ui-monospace,monospace";
+    const tw=ctx.measureText(label).width+8, th=14, ly=y-th<0?y:y-th;
+    ctx.fillStyle=col; ctx.fillRect(x,ly,tw,th); ctx.fillStyle="#020617"; ctx.fillText(label,x+4,ly+10);
+    // centroide
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(a.centroide.x_c*W, a.centroide.y_c*H, 3,0,Math.PI*2); ctx.fill();
+  });
+  // Leyenda chips filtrado
+  renderList();
+  document.getElementById('json').textContent = JSON.stringify(atributos, null, 2);
+}
+function renderList(){
+  const f=(document.getElementById('filter').value||"").toLowerCase();
+  const list=document.getElementById('list'), chips=document.getElementById('chips');
+  list.innerHTML=""; chips.innerHTML="";
+  const filtered = atributos.filter(a=> !f || a.color.includes(f) || a.tamaño.includes(f) || (a.z_rel<0.45?"cerca":a.z_rel<0.65?"medio":"lejos").includes(f) || a.cls.includes(f));
+  filtered.forEach(a=>{
+    const el=document.createElement('div'); el.className='chip on'; el.textContent=`#${a.track_id} ${a.cls} · ${a.color} · z${a.z_rel.toFixed(2)} · (${a.centroide.x_c.toFixed(2)},${a.centroide.y_c.toFixed(2)})`; list.appendChild(el);
+  });
+  // chips leyenda
+  ["person","cup","laptop","rojo","negro","celeste"].forEach(s=>{
+    const b=document.createElement('span'); b.textContent=s; b.style.cssText="padding:2px 6px;border-radius:999px;background:#16213a;border:1px solid #1e293b;font-size:10px;color:#94a3b8"; b.onclick=()=>{document.getElementById('filter').value=s; renderList();}; chips.appendChild(b);
+  });
+}
+document.getElementById('filter').addEventListener('input', renderList);
+function answer(q){
+  const cup=atributos.find(a=>a.cls==="cup");
+  const sorted=[...atributos].sort((a,b)=>a.centroide.x_c-b.centroide.x_c);
+  let ans="";
+  if(q==="ves") ans = `Veo ${atributos.length} objetos (frame #42, Glass 107ms): ${atributos.map(a=>`${a.cls} ${a.color} ${a.tamaño} z${a.z_rel.toFixed(2)}`).join(", ")}.`;
+  else if(q==="color") ans = `La taza es ${cup.color} (${cup.color_hsv_hex}) tamaño ${cup.tamaño} área ${Math.round(cup.area*100)}% a distancia media z ${cup.z_rel.toFixed(2)} (track #${cup.track_id}, LRU hit).`;
+  else if(q==="izq") {
+    const left = sorted[0]; const right = sorted[sorted.length-1];
+    ans = `Ordenado por x_c: izquierda ${left.cls} ${left.color} (${left.centroide.x_c.toFixed(2)}), centro taza (${cup.centroide.x_c.toFixed(2)}), derecha ${right.cls}. La ${left.cls} está a la izquierda de la taza.`;
+  } else if(q==="ptt") ans = `🎤 push-to-talk: "¿qué color es la taza?" → frame #42 anclado → "${cup.color} (#c0392b) mediana z 0.42" + badge overlay sin saturar main.js.`;
+  document.getElementById('ans').textContent = ans;
+}
+document.getElementById('q1').onclick=()=>answer("ves");
+document.getElementById('q2').onclick=()=>answer("color");
+document.getElementById('q3').onclick=()=>answer("izq");
+document.getElementById('ptt').onclick=()=>answer("ptt");
+// auto draw
+draw();
+</script>
+</body>
+</html>

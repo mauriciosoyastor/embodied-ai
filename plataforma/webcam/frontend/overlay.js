@@ -245,12 +245,20 @@ export function createOverlay({
       ctx.lineWidth = ident ? 2.5 : 2;
       ctx.strokeRect(x, y, w, h);
 
-      // etiqueta con fondo — Variante A badge si hay identidad
+      // etiqueta con fondo — Variante A badge si hay identidad, else AtributoVista S4-A
       let label;
       if (ident) {
         if (ident.estado === "confirmado") label = `Hola ${ident.nombre} ✓ ${(1 - ident.cosine).toFixed(2)}`;
         else if (ident.estado === "posible") label = `posible ${ident.nombre}? ${ident.cosine.toFixed(2)}`;
         else label = `desconocido ${ident.cosine.toFixed(2)}`;
+      } else if (b.color || b.tamano || b.track_id !== undefined) {
+        const col = String(b.color || b.color_hsv || "");
+        const hex = b.color_hsv_hex ? ` ${b.color_hsv_hex}` : "";
+        const tam = b.tamano ? ` ${b.tamano}` : "";
+        const areaPct = b.area !== undefined ? ` ${Math.round(Number(b.area)*100)}%` : "";
+        const z = b.z_rel !== undefined && b.z_rel !== null ? ` z${Number(b.z_rel).toFixed(2)}` : "";
+        const tid = b.track_id !== undefined ? ` #${b.track_id}` : "";
+        label = `${cls} ${(conf * 100).toFixed(0)}% | ${col}${hex}${tam}${areaPct}${z}${tid}`;
       } else {
         label = `${cls} ${(conf * 100).toFixed(0)}%`;
       }
@@ -263,6 +271,17 @@ export function createOverlay({
       ctx.fillRect(x, ly, tw, th);
       ctx.fillStyle = ident ? "#020617" : "#0b0f14";
       ctx.fillText(label, x + 4, ly + 11);
+
+      // S4-A centroide AtributoVista — punto verde <1ms
+      const cent = b.centroide || b.center || null;
+      if (cent && typeof cent.x_c === "number" && typeof cent.y_c === "number") {
+        const cx = Math.max(0, Math.min(1, cent.x_c)) * W;
+        const cy = Math.max(0, Math.min(1, cent.y_c)) * H;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // trayectoria si existe
       const traj = ident ? trajMap.get(ident.id) : null;
