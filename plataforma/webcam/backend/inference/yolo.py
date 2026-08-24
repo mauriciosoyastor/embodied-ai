@@ -315,6 +315,19 @@ class YoloDetector:
                 self._session = None
                 self.is_stub = True
 
+    def warmup(self, n: int = 10) -> None:
+        """Compila grafos ONNX/TensorRT — 10 dummy 1×3×640×640 amortiza cold-start."""
+        if self._session is None or self.is_stub:
+            return
+        try:
+            dummy = np.random.randn(1, 3, IMGSZ, IMGSZ).astype(np.float32)
+            sess = self._session  # type: ignore
+            input_name: str = sess.get_inputs()[0].name  # type: ignore
+            for _ in range(max(0, n)):
+                sess.run(None, {input_name: dummy})  # type: ignore
+        except Exception:
+            return
+
     def predict(
         self,
         image: NDArray[np.uint8] | None = None,

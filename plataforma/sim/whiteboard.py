@@ -55,6 +55,9 @@ class IdentidadVista(BaseModel):
     )
     frame_id: int = Field(default=0, description="frame origen")
     ts: float = Field(default=0.0, description="unix ms")
+    threshold_per_person: float | None = Field(
+        default=None, description="debug per-person thr 0.42-0.65, None si fijo"
+    )
 
 
 # ---------------------------------------------------------------------------

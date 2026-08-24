@@ -170,3 +170,32 @@ function canvasOrVideoToJpegB64(source) {
     return "";
   }
 }
+
+// 041 Q2 C — fallback dinámico WS D5 ↔ WebRTC Jetson (040)
+// Probe HEAD https://<JETSON-IP>:8554/webrtc/signal 200→webrtc else ws.
+// Headless/node sin fetch → 'ws' inmediato para pytest/CI.
+export async function selectTransport({
+  jetsonHost,
+  webrtcSignalPath = "/webrtc/signal",
+  timeoutMs = 800,
+} = {}) {
+  const host =
+    jetsonHost ||
+    (typeof location !== "undefined" && location.hostname) ||
+    "localhost";
+  const url = `https://${host}:8554${webrtcSignalPath}`;
+  if (typeof fetch !== "function") return "ws";
+  try {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    const res = await fetch(url, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    if (timer) clearTimeout(timer);
+    return res.ok ? "webrtc" : "ws";
+  } catch {
+    return "ws";
+  }
+}
