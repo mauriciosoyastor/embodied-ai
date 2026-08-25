@@ -28,8 +28,8 @@ LRU_TTL_MS: int = 2000
 OTEL_ENABLED: bool = True
 ONNX_INTRA_OP: int = 2
 ONNX_INTER_OP: int = 1
-# Wayfinder 109 — IMGSZ cableado (28.3ms p50 vs 49.8ms 640)  # noqa: E501
-YOLO_IMGSZ: int = 480
+# Wayfinder 109 — IMGSZ cableado revert a 640 (480 inestable real)  # noqa: E501
+YOLO_IMGSZ: int = 640
 # S3 — PromptList W30 / World-s (mapa #88 G1/G2)
 YOLO_WORLD_ENABLED: bool = False
 YOLO_WORLD_DYNAMIC_BY_VOZ: bool = False
