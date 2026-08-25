@@ -32,7 +32,7 @@ ONNX_INTER_OP: int = 1
 YOLO_IMGSZ: int = 640
 # S3 — PromptList W30 / World-s (mapa #88 G1/G2) — 008 Destination: True jarvis 51MB  # noqa: E501
 YOLO_WORLD_ENABLED: bool = True
-YOLO_WORLD_DYNAMIC_BY_VOZ: bool = False
+YOLO_WORLD_DYNAMIC_BY_VOZ: bool = True
 YOLO_WORLD_PROMPTLIST_STATIC: list[str] = [
     "person",
     "chair",
