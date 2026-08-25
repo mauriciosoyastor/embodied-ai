@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os as _os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -26,7 +27,14 @@ from plataforma.webcam.backend.config import (
     YOLO_PERSON_AREA_MIN,
     YOLO_PERSON_CONF,
     YOLO_WHITELIST,
+    YOLO_WORLD_ENABLED,
 )
+
+# 048 OMP pinning is_world cache — evita contención gather(pose,depth,world) en edge 10c
+_os.environ.setdefault("OMP_NUM_THREADS", "2")
+_os.environ.setdefault("MKL_NUM_THREADS", "2")
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+
 from plataforma.webcam.backend.fsm import GestoReconocido as FsmGesto
 from plataforma.webcam.backend.fsm import MissionFSM
 from plataforma.webcam.backend.identities import store
@@ -40,6 +48,8 @@ from plataforma.webcam.backend.metrics import (
     record_dropped_frame,
     record_inference,
     record_total,
+    record_world,
+    record_yolo,
 )
 
 # Global clients para broadcast purge (hibrido)
@@ -234,6 +244,39 @@ def _passes_whitelist(box: Any) -> bool:
     return conf >= YOLO_CONF and area >= YOLO_AREA_MIN
 
 
+def _passes_world(box: Any, box_thr: float = 0.35, text_thr: float = 0.25) -> bool:  # noqa: ARG001
+    """Filtro World open-vocab 048: box_thr 0.35 text_thr 0.25 + area 0.03."""
+    # text_thr mapeado a conf para stub (real: similitud texto-imagen)
+    _ = text_thr
+    cls = str(
+        getattr(box, "cls", getattr(box, "label", ""))
+        if isinstance(box, dict)
+        else getattr(box, "cls", "")
+    )  # noqa: E501
+    if isinstance(box, dict):
+        cls = str(box.get("cls") or box.get("label") or "")
+    if not cls:
+        return False
+    conf = float(
+        getattr(box, "conf", 0.0)
+        if not isinstance(box, dict)
+        else float(box.get("conf", 0.0))
+    )  # noqa: E501
+    w = float(
+        getattr(box, "w", 0.0)
+        if not isinstance(box, dict)
+        else float(box.get("w", 0.0))
+    )  # noqa: E501
+    h = float(
+        getattr(box, "h", 0.0)
+        if not isinstance(box, dict)
+        else float(box.get("h", 0.0))
+    )  # noqa: E501
+    area = max(0.0, w) * max(0.0, h)
+    # mundo no tiene person thr especial, usa box_thr + area min genérica
+    return conf >= box_thr and area >= YOLO_AREA_MIN
+
+
 # --- AtributoVista helpers S1 (HSV <1ms, sin red) ---
 
 _HSV_BINS = 18
@@ -348,15 +391,33 @@ def _extract_atributos(
             "y_c": max(0.0, min(1.0, y + h / 2.0)),
         }
         bbox = {"x": x, "y": y, "w": w, "h": h}
-        # S2-B: track_id persistente vía ByteTrack, fallback idx
+        # 048 is_world flag + prompt_origen (PromptList)
+        is_world = False
+        prompt_origen: str | None = None
+        try:
+            if isinstance(b, dict):
+                is_world = bool(b.get("is_world", False))
+                prompt_origen = b.get("prompt_origen") if is_world else None
+                if is_world and not prompt_origen:
+                    prompt_origen = cls
+            else:
+                is_world = bool(getattr(b, "is_world", False))
+                prompt_origen = getattr(b, "prompt_origen", None) if is_world else None
+                if is_world and not prompt_origen:
+                    prompt_origen = cls
+        except Exception:
+            is_world = False
+            prompt_origen = None
+        # S2-B: track_id ByteTrack composite is_world
         track_id = int(track_ids[idx]) if track_ids and idx < len(track_ids) else idx
+        lru_key = track_id + 10000 if is_world else track_id
         # crop para color — LRU hit evita histograma
         color_name: str = "unknown"
         color_hex: str = _HSV_HEX["unknown"]
         cached = None
         if lru is not None:
             try:
-                cached = lru.get(track_id, bbox, now_ms=ts)
+                cached = lru.get(lru_key, bbox, now_ms=ts)
             except Exception:
                 cached = None
         if cached is not None:
@@ -376,7 +437,7 @@ def _extract_atributos(
                     color_name, color_hex = _color_hsv_from_crop(crop)
                     if lru is not None:
                         try:
-                            lru.put(track_id, bbox, color_name, color_hex, ts=ts)
+                            lru.put(lru_key, bbox, color_name, color_hex, ts=ts)
                         except Exception:
                             pass
             except Exception:
@@ -397,6 +458,8 @@ def _extract_atributos(
                 "color_hsv_hex": color_hex,
                 "color_vlm": None,
                 "color": color_name,
+                "is_world": is_world,
+                "prompt_origen": prompt_origen,
                 "frame_id": frame_id,
                 "ts": ts,
                 "ttl_ms": {
@@ -749,6 +812,12 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                     total_ms = (time.perf_counter() - total_start) * 1000.0
                     record_inference(infer_ms)
                     record_total(total_ms)
+                    record_yolo(infer_ms)
+                    from plataforma.webcam.backend.metrics import (
+                        record_glass,  # type: ignore
+                    )
+
+                    record_glass(total_ms)
                 except Exception:
                     pass
                 # S3 — anclaje voz frame_id + actualizar global last_atributos
@@ -832,6 +901,7 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 continue
 
     async def slow_processor() -> None:
+        global last_atributos, last_frame_id, last_ts  # noqa: E501
         while True:
             try:
                 frame_payload = await slow_queue.get()
@@ -897,8 +967,24 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
 
                 pose_detector = get_pose_detector()
                 depth_estimator = get_depth_estimator()
+                # 048 world detector lazy + OMP pinning is_world cache
+                world_detector = None
+                world_enabled = False
+                try:
+                    from plataforma.webcam.backend.inference.yolo_world import (
+                        get_yolo_world_detector,
+                    )
 
-                # ejecutar ambos en paralelo via to_thread con intra_op 2
+                    world_enabled = bool(YOLO_WORLD_ENABLED)
+                    if world_enabled:
+                        world_detector = get_yolo_world_detector()
+                        if world_detector is not None and world_detector.is_stub:
+                            world_enabled = False
+                except Exception:
+                    world_enabled = False
+                    world_detector = None
+
+                # ejecutar pose+depth+world via to_thread — piggyback 048
                 def _pose_call() -> Any:
                     return pose_detector.predict(img)
 
@@ -920,15 +1006,103 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                         ]
                     return depth_estimator.estimate(img, dict_boxes, frame_id=frame_id)
 
-                # gather paralelo sin jitter
-                pose_res, depth_res = await asyncio.gather(
+                def _world_call() -> Any:
+                    if (
+                        not world_enabled
+                        or world_detector is None
+                        or world_detector.is_stub
+                    ):  # noqa: E501
+                        return []
+                    # 048 gating 2Hz — slow %2 => 2.5Hz
+                    if slow_tick[0] % 2 != 0:
+                        return []
+                    try:
+                        import time as _t
+
+                        w_start = _t.perf_counter()
+                        # Zero-Copy img_view reuse sin .copy() 048
+                        boxes_w = world_detector.predict(img)  # type: ignore
+                        filtered_w: list[Any] = []
+                        for b in boxes_w:
+                            # marcar is_world para _extract_atributos y LRU composite
+                            try:
+                                setattr(b, "is_world", True)  # type: ignore
+                                if not getattr(b, "prompt_origen", None):
+                                    setattr(
+                                        b, "prompt_origen", str(getattr(b, "cls", ""))
+                                    )  # type: ignore  # noqa: E501
+                            except Exception:
+                                pass
+                            if _passes_world(b):
+                                filtered_w.append(b)
+                        # métrica world_infer 048
+                        try:
+                            w_ms = (_t.perf_counter() - w_start) * 1000.0
+                            record_world(w_ms)
+                        except Exception:
+                            pass
+                        return filtered_w
+                    except Exception:
+                        return []
+
+                # gather paralelo sin jitter — world piggyback no bloquea fast
+                pose_res, depth_res, world_res = await asyncio.gather(
                     asyncio.to_thread(_pose_call),
                     asyncio.to_thread(_depth_call),
+                    asyncio.to_thread(_world_call),
                 )
                 # Piggyback opc; no rompe seq; debug estado si hay datos
                 # overlay v2 aún no consume, pero mantiene TTL
                 _ = pose_res
                 _ = depth_res
+                # 048 World piggyback is_world — extraer AtributoVista
+                if world_res:
+                    try:
+                        # tracker reuse is_world composite key 048
+                        try:
+                            from plataforma.webcam.backend.tracker import get_tracker
+
+                            t_world = get_tracker()
+                            track_ids_w = t_world.update(world_res)
+                        except Exception:
+                            track_ids_w = list(range(len(world_res)))
+                        world_atributos = _extract_atributos(
+                            world_res, img, frame_id, now_ms(), track_ids=track_ids_w
+                        )
+                        # Zero-Copy world_atributos is_world
+                        # ABORTED overlay-only: no muta Whiteboard
+                        is_aborted = False
+                        try:
+                            is_aborted = _mission_fsm.estado.value == "SIM_ABORTED"  # type: ignore  # noqa: E501
+                        except Exception:
+                            is_aborted = False
+                        # merge last_atributos voz/overlay + Whiteboard
+                        try:
+                            if not is_aborted:
+                                # no duplicar si ya está — extender
+                                last_atributos = list(last_atributos) + list(
+                                    world_atributos
+                                )  # type: ignore  # noqa: E501
+                            # enviar detec world envelope para overlay is_world
+                            async with seq_lock:
+                                seq_counter[0] += 1
+                                w_seq = seq_counter[0]
+                            w_env = make_envelope(
+                                "detecciones",
+                                w_seq,
+                                {
+                                    "frame_id": frame_id,
+                                    "boxes": world_atributos,
+                                    "is_world": True,
+                                },  # noqa: E501
+                                ts=now_ms(),
+                            )
+                            await websocket.send_text(json.dumps(w_env))
+                        except Exception:
+                            pass
+                        # métrica world ya registrada; 2Hz no satura
+                    except Exception:
+                        pass
                 # Opcional: enviar estado con posturas/profundidades si no stub
                 # Mantenemos seq coherente si emitimos
                 # Para no inflar seq en headless stub (pose_res==[]), skip

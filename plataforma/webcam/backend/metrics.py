@@ -15,6 +15,7 @@ _cache_misses: int = 0
 _ttl_expirations: Counter[str] = Counter()
 _glass_samples: list[float] = []
 _yolo_samples: list[float] = []
+_world_samples: list[float] = []
 _inference_samples: list[float] = []
 _total_samples: list[float] = []
 _fps_samples: list[float] = []
@@ -46,6 +47,12 @@ def record_yolo(ms: float) -> None:
     _yolo_samples.append(float(ms))
     if len(_yolo_samples) > 200:
         _yolo_samples.pop(0)
+
+
+def record_world(ms: float) -> None:
+    _world_samples.append(float(ms))
+    if len(_world_samples) > 200:
+        _world_samples.pop(0)
 
 
 def record_inference(ms: float) -> None:
@@ -126,6 +133,12 @@ def render_prometheus() -> str:
     lines.append("# HELP yolo_infer_p50_ms YOLO infer p50")
     lines.append("# TYPE yolo_infer_p50_ms gauge")
     lines.append(f"yolo_infer_p50_ms {_p50(_yolo_samples):.1f}")
+    lines.append("# HELP world_infer_p50_ms YOLO-World infer p50 048")
+    lines.append("# TYPE world_infer_p50_ms gauge")
+    lines.append(f"world_infer_p50_ms {_p50(_world_samples):.1f}")
+    lines.append("# HELP world_infer_p95_ms YOLO-World infer p95")
+    lines.append("# TYPE world_infer_p95_ms gauge")
+    lines.append(f"world_infer_p95_ms {_p95(_world_samples):.1f}")
     lines.append("# HELP inference_time_ms p50 total infer")
     lines.append("# TYPE inference_time_ms gauge")
     lines.append(f"inference_time_ms {_p50(_inference_samples):.1f}")
@@ -150,6 +163,7 @@ def reset() -> None:
     _ttl_expirations.clear()
     _glass_samples.clear()
     _yolo_samples.clear()
+    _world_samples.clear()
     _inference_samples.clear()
     _total_samples.clear()
     _fps_samples.clear()
