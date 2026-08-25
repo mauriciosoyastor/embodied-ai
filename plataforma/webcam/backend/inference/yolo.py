@@ -20,7 +20,12 @@ if TYPE_CHECKING:
 # Constantes
 # ---------------------------------------------------------------------------
 
-IMGSZ: int = 640
+# IMGSZ cableado desde config (Wayfinder 109) — 480 da 28ms vs 49ms sin perder small  # noqa: E501
+try:
+    from plataforma.webcam.backend.config import YOLO_IMGSZ as _IMG_FROM_CFG
+except Exception:
+    _IMG_FROM_CFG = 640
+IMGSZ: int = int(_IMG_FROM_CFG)
 STRIDE: int = 32
 PAD_VALUE: int = 114
 CONF_DEFAULT: float = 0.5
