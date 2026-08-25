@@ -243,21 +243,36 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     return {
                         "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')} (frame #{last_frame_id})."  # noqa: E501
                     }
-            # S3 dynamic PromptList: extraer prompts si YOLO_WORLD_DYNAMIC_BY_VOZ
-            try:
-                from plataforma.webcam.backend.config import YOLO_WORLD_DYNAMIC_BY_VOZ
+    except Exception:
+        pass
+    # S3 dynamic PromptList: FIX — fuera de is_color_q para que "mira/busca/dónde está" dispare siempre si DYNAMIC=True  # noqa: E501
+    try:
+        from plataforma.webcam.backend.config import YOLO_WORLD_DYNAMIC_BY_VOZ
 
-                if YOLO_WORLD_DYNAMIC_BY_VOZ:
-                    from plataforma.webcam.backend.inference.yolo_world import (
-                        extract_prompts_from_transcript,
-                        get_yolo_world_detector,
-                    )
+        if YOLO_WORLD_DYNAMIC_BY_VOZ:
+            from plataforma.webcam.backend.inference.yolo_world import (
+                extract_prompts_from_transcript,
+                get_yolo_world_detector,
+            )
 
-                    prompts = extract_prompts_from_transcript(prompt)
-                    if prompts:
-                        get_yolo_world_detector(prompt_list=prompts)
-            except Exception:
-                pass
+            prompts = extract_prompts_from_transcript(prompt)
+            if prompts:
+                get_yolo_world_detector(prompt_list=prompts)
+                # ack corto si es comando percepción puro — evita LLM fallback "incompleto"  # noqa: E501
+                low2 = prompt.lower()
+                if any(
+                    k in low2
+                    for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
+                ):  # noqa: E501
+                    try:
+                        from plataforma.webcam.backend.ws import (
+                            last_frame_id as _fid,  # noqa: E501
+                        )
+                    except Exception:
+                        _fid = 0
+                    return {
+                        "text": f"Buscando {', '.join(prompts)} (YOLO-World dinámico, frame #{_fid})."  # noqa: E501
+                    }
     except Exception:
         pass
     import os
