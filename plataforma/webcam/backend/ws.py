@@ -27,6 +27,8 @@ from plataforma.webcam.backend.config import (
     YOLO_PERSON_CONF,
     YOLO_WHITELIST,
 )
+from plataforma.webcam.backend.fsm import GestoReconocido as FsmGesto
+from plataforma.webcam.backend.fsm import MissionFSM
 from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import (
     ALLOWED_LABELS,
@@ -42,6 +44,10 @@ from plataforma.webcam.backend.metrics import (
 
 # Global clients para broadcast purge (hibrido)
 connected_clients: set[WebSocketLike] = set()
+# FSM singleton para WS — histéresis N=5 latch ABORTED (Ticket 01)
+_mission_fsm = MissionFSM()
+# último mission emitido para evitar spam de envelopes
+_last_mission: str | None = None
 # S3 — último PercepcionVista para anclaje voz frame_id
 last_atributos: list[dict[str, Any]] = []
 last_frame_id: int = 0
@@ -645,6 +651,7 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
     fast_queue: AsyncLeakyQueue[dict[str, Any]] = AsyncLeakyQueue(maxsize=1)
     slow_queue: AsyncLeakyQueue[dict[str, Any]] = AsyncLeakyQueue(maxsize=1)
     frame_tick: list[int] = [0]
+    slow_tick: list[int] = [0]
 
     async def receiver() -> None:
         while True:
@@ -771,6 +778,40 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                 gesto_env = make_envelope("gesto", gesto_seq, gesto_payload, ts=ts)
                 await websocket.send_text(json.dumps(gesto_env))
 
+                # FSM cableada (Ticket 01) — histéresis N=5 latch ABORTED
+                try:
+                    label_raw = str(gesto_payload.get("label", "none"))
+                    conf_raw = float(gesto_payload.get("conf", 0.0))
+                    # validar label para fsm
+                    if label_raw not in ("open_palm", "fist", "thumbs_up", "none"):
+                        label_raw = "none"
+                    fsm_event = FsmGesto(
+                        label=label_raw,  # type: ignore[arg-type]
+                        conf=conf_raw,
+                        frame_id=frame_id,
+                        ts=ts,
+                    )
+                    new_state = _mission_fsm.handle_gesto(fsm_event)
+                    mission_str = new_state.value
+                    global _last_mission
+                    # emitir siempre para que frontend refleje aunque no cambie  # noqa: E501
+                    # pero throttling: solo si cambió o cada 5 ticks para no spam
+                    should_emit = mission_str != _last_mission or frame_tick[0] % 5 == 0
+                    if should_emit:
+                        _last_mission = mission_str
+                        async with seq_lock:
+                            seq_counter[0] += 1
+                            estado_seq = seq_counter[0]
+                        estado_env = make_envelope(
+                            "estado",
+                            estado_seq,
+                            {"mission": mission_str, "frame_id": frame_id},
+                            ts=ts,
+                        )
+                        await websocket.send_text(json.dumps(estado_env))
+                except Exception:
+                    pass
+
                 # VLM tick cada VLM_INTERVAL frames
                 frame_tick[0] += 1
                 if VLM_ENABLED and frame_tick[0] % VLM_INTERVAL == 0:
@@ -799,13 +840,14 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
             except Exception:
                 break
             try:
-                # throttling 5Hz: si fast es 10Hz, slow consume cada 2 fast pero
-                # como ambas colas reciben mismo payload con Leaky N=1,
-                # el slow naturalmente se alinea a 5Hz si inferencia ~40ms + jitter.
-                # Implementamos gate simple: procesar 1 de cada 2 ticks slow.
-                # Contamos ticks slow separados
-                # Para determinismo en test, procesamos todo (mock rápido)
-                # pero mantenemos to_thread gather para cumplir spec.
+                # Gating 5Hz (Ticket 03): subsampling cada 2 frames  # noqa: E501
+                slow_tick[0] += 1
+                if slow_tick[0] % 2 == 1:
+                    # skip 1 de cada 2 para 5Hz vs 10Hz fast
+                    continue
+                # si fast tiene backlog, saltar slow para priorizar gestos
+                if fast_queue.qsize() > 0:
+                    continue
                 frame_id_any = frame_payload.get("frame_id")
                 if not isinstance(frame_id_any, int):
                     continue
@@ -824,8 +866,30 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                     except Exception:
                         continue
 
-                # Obtener boxes para depth (re-ejecutar YOLO filtrado)
-                # Evitamos doble inferencia pesada; fallback headless
+                # Reuso boxes_payload (Ticket 02): usa last_atributos si frame cercano, evita doble yolo.predict  # noqa: E501
+                boxes_for_depth: list[dict[str, Any]] | None = None
+                try:
+                    # last_atributos del fast_processor mas reciente; acepta frame_id +-2 o ts reciente  # noqa: E501
+                    if last_atributos and last_ts:
+                        age_ok = (now_ms() - int(last_ts)) < 300
+                        frame_close = abs(int(last_frame_id) - int(frame_id)) <= 2
+                        if age_ok or frame_close:
+                            boxes_for_depth = [
+                                {
+                                    "x": float(b.get("x", 0)),
+                                    "y": float(b.get("y", 0)),
+                                    "w": float(b.get("w", 0)),
+                                    "h": float(b.get("h", 0)),
+                                }
+                                for b in last_atributos
+                            ]
+                except Exception:
+                    boxes_for_depth = None
+                # Fallback si no hay cache (headless primer frame)
+                if boxes_for_depth is None:
+                    cached = frame_payload.get("boxes_payload")  # type: ignore
+                    if isinstance(cached, list) and cached:
+                        boxes_for_depth = cached  # type: ignore
                 from plataforma.webcam.backend.inference.depth import (
                     get_depth_estimator,
                 )
@@ -839,21 +903,21 @@ async def perception_ws_handler(websocket: WebSocketLike) -> None:
                     return pose_detector.predict(img)
 
                 def _depth_call() -> Any:
-                    # depth necesita boxes; usar boxes de run_inference previo o []
-                    # Para headless, pasamos boxes de yolo filtradas (re-ejecutar)
-                    yolo = get_yolo_detector()
-                    y_boxes = yolo.predict(img)
-                    # filtrar whitelist para depth centers
-                    filtered = [b for b in y_boxes if _passes_whitelist(b)]
-                    dict_boxes = [
-                        {
-                            "x": float(b.x),
-                            "y": float(b.y),
-                            "w": float(b.w),
-                            "h": float(b.h),
-                        }
-                        for b in filtered
-                    ]
+                    dict_boxes = boxes_for_depth  # type: ignore
+                    if dict_boxes is None:
+                        # ultimo fallback: re-ejecutar YOLO solo si cache miss  # noqa: E501
+                        yolo = get_yolo_detector()
+                        y_boxes = yolo.predict(img)
+                        filtered = [b for b in y_boxes if _passes_whitelist(b)]
+                        dict_boxes = [
+                            {
+                                "x": float(b.x),
+                                "y": float(b.y),
+                                "w": float(b.w),
+                                "h": float(b.h),
+                            }
+                            for b in filtered
+                        ]
                     return depth_estimator.estimate(img, dict_boxes, frame_id=frame_id)
 
                 # gather paralelo sin jitter
