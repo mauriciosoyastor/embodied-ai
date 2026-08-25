@@ -51,12 +51,12 @@ class YoloWorldDetector:
                     providers=["CPUExecutionProvider"],
                 )
                 self.is_stub = False
-                # 048 cache offline txt_feats 20x512 (stub zeros; real CLIP ViT-B/32 512-d)  # noqa: E501
+                # 048 cache offline txt_feats 1x20x512 (stub zeros; real CLIP ViT-B/32 512-d)  # noqa: E501
                 try:
                     import numpy as np  # type: ignore
 
                     self._txt_feats_static = np.zeros(
-                        (len(self.prompt_list), 512), dtype=np.float32
+                        (1, len(self.prompt_list), 512), dtype=np.float32
                     )
                 except Exception:
                     self._txt_feats_static = None
@@ -73,12 +73,12 @@ class YoloWorldDetector:
             cleaned = cleaned[:8]
         if cleaned:
             self.prompt_list = cleaned
-            # invalidar cache txt_feats si dinámica (max 8)
+            # invalidar cache txt_feats si dinámica (max 8) 048 1xNx512
             try:
                 import numpy as np  # type: ignore
 
                 self._txt_feats_static = np.zeros(
-                    (len(self.prompt_list), 512), dtype=np.float32
+                    (1, len(self.prompt_list), 512), dtype=np.float32
                 )
             except Exception:
                 self._txt_feats_static = None
@@ -93,8 +93,10 @@ class YoloWorldDetector:
             sess: Any = self._session
             input_name: str = sess.get_inputs()[0].name  # type: ignore
             dummy_img = np.random.randn(1, 3, 640, 640).astype(np.float32)
-            # dummy txt_feats 8x512 si modelo espera segundo input dinámico
-            dummy_txt = np.zeros((min(8, len(self.prompt_list)), 512), dtype=np.float32)
+            # dummy txt_feats 1x8x512 si modelo espera segundo input dinámico  # noqa: E501
+            dummy_txt = np.zeros(
+                (1, min(8, len(self.prompt_list)), 512), dtype=np.float32
+            )
             for _ in range(max(0, n)):
                 try:
                     inputs = {input_name: dummy_img}

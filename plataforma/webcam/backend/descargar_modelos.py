@@ -55,7 +55,7 @@ EXPECTED_SHA256: dict[str, str | None] = {
     "yolo11n-pose.onnx": None,
     "midas_small_256.onnx": None,
     "hand_landmarker.task": None,
-    "yolo-world-s.onnx": None,
+    "yolo-world-s.onnx": "381ced485b23ed8f06de3e82bb2745e1420c181c64f0a176784c34a959d550a1",  # noqa: E501
 }
 
 MODELS: dict[str, dict[str, str]] = {

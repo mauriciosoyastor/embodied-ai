@@ -1,6 +1,6 @@
 # Wayfinder Map — YOLO-World s Open-Vocab CPU (slow 2Hz)
 
-> Label: `wayfinder:map` · Estado: abierto — charting 2026-08-25 · Tracker: local-markdown · Creado: 2026-08-25
+> Label: `wayfinder:map` · Estado: cerrado — way completo 2026-08-25 · Tracker: local-markdown · Creado: 2026-08-25 · Cerrado: 2026-08-25
 
 ## Destination
 
