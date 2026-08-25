@@ -60,6 +60,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="webcam-backend", version="0.1.0", lifespan=lifespan)
 
+# CORS para fetch 5173→8000 (Ticket 04) — vite dev 5173 y preview
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+        ],
+        allow_origin_regex=r"http://localhost:\d+",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+except Exception:
+    pass
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
