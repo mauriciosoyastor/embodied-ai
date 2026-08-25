@@ -60,6 +60,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="webcam-backend", version="0.1.0", lifespan=lifespan)
 
+# CORS para fetch 5173→8000 (Ticket 04) — vite dev 5173 y preview
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+        ],
+        allow_origin_regex=r"http://localhost:\d+",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+except Exception:
+    pass
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -80,6 +99,35 @@ async def metrics() -> Any:
 async def list_identities() -> list[dict[str, object]]:
     """Snapshot hibrido para hidratación inicial (Ticket 025)."""
     return await store.get_all()
+
+
+@app.post("/fsm/reset")
+async def fsm_reset() -> dict[str, str]:
+    """Libera latch ABORTED → IDLE sin reconectar WS (Ticket 04)."""
+    try:
+        from plataforma.webcam.backend.ws import _mission_fsm
+    except Exception:
+        return {"status": "error", "mission": "IDLE"}
+    try:
+        _mission_fsm.reset()
+        # reset last mission cache para forzar próximo envelope
+        import plataforma.webcam.backend.ws as ws_mod
+
+        ws_mod._last_mission = None  # type: ignore
+        return {"status": "ok", "mission": _mission_fsm.estado.value}
+    except Exception as exc:
+        return {"status": "error", "mission": str(exc)}
+
+
+@app.get("/fsm/state")
+async def fsm_state() -> dict[str, str]:
+    """Estado FSM actual para polling/dashboard."""
+    try:
+        from plataforma.webcam.backend.ws import _mission_fsm
+
+        return {"mission": _mission_fsm.estado.value}
+    except Exception:
+        return {"mission": "IDLE"}
 
 
 @app.post("/voz")
