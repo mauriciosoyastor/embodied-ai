@@ -6,6 +6,18 @@
 
 const SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
+// S3+T2: alias STT menor tasa→taza + normalización para voz YOLO-World
+export function normalizeTranscriptForWorld(text) {
+  if (!text) return text;
+  return text.replace(/\btasa\b/gi, 'taza').replace(/\btasas\b/gi, 'tazas');
+}
+
+export function shouldSendTranscript(text) {
+  const t = (text || '').trim();
+  if (t.length < 3) return false;
+  return true;
+}
+
 export function createVoiceChat({ onSendToLLM } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'voice-chat';
@@ -133,16 +145,24 @@ export function createVoiceChat({ onSendToLLM } = {}) {
     return r;
   }
 
+  let sendDebounceTimer = null;
   function handleUserText(text) {
-    if (!text.trim()) return;
-    transcripts.push({ role: 'user', text: text.trim() });
-    renderTranscript();
-    setState('thinking');
-    sendToLLM(text.trim()).then((reply) => {
-      transcripts.push({ role: 'bot', text: reply });
+    const raw = (text || '').trim();
+    if (!shouldSendTranscript(raw)) return;
+    const normalized = normalizeTranscriptForWorld(raw);
+    // debounce 500ms para STT final + hola prefix
+    if (sendDebounceTimer) clearTimeout(sendDebounceTimer);
+    sendDebounceTimer = setTimeout(() => {
+      sendDebounceTimer = null;
+      transcripts.push({ role: 'user', text: normalized });
       renderTranscript();
-      speak(reply);
-    });
+      setState('thinking');
+      sendToLLM(normalized).then((reply) => {
+        transcripts.push({ role: 'bot', text: reply });
+        renderTranscript();
+        speak(reply);
+      });
+    }, 300);
   }
 
   function startListening(e) {
@@ -248,12 +268,6 @@ export function createVoiceChat({ onSendToLLM } = {}) {
     }
     try {
       if (recog && state === 'listening') {
-        // Si no hubo final pero hay interim, tratar interim como final al soltar
-        if (interim && interim !== 'Escuchando...' && !interim.startsWith('Error')) {
-          const txt = interim;
-          interim = '';
-          handleUserText(txt);
-        }
         recog.stop();
         // onend se encargará de setState idle si no hubo final
         // pero forzamos idle si no hay thinking/speaking

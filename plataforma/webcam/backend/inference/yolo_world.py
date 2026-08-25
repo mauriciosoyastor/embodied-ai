@@ -381,6 +381,9 @@ def extract_prompts_from_transcript(text: str) -> list[str]:
     phrase = m.group(1).strip()
     parts = re.split(r"\s+y\s+|\s*,\s*|\s+con\s+", phrase)
     prompts = [p.strip() for p in parts if len(p.strip()) >= 3 and len(p.strip()) <= 40]
+    # alias STT menor tasa→taza (es-AR) antes de filtrar
+    prompts = [re.sub(r"\btasa\b", "taza", p) for p in prompts]
+    prompts = [re.sub(r"\btasas\b", "tazas", p) for p in prompts]
     from plataforma.webcam.backend.config import YOLO_WHITELIST
 
     out: list[str] = []
