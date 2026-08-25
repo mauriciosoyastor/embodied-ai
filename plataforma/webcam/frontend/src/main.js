@@ -94,6 +94,7 @@ function createPercepcionDOM() {
     <div class="percepcion-controls">
       <button id="p-start">Iniciar cámara</button>
       <button id="p-mock">Mock boxes</button>
+      <button id="p-reset" title="POST /fsm/reset libera ABORTED→IDLE">Reset FSM</button>
     </div>
     <div class="percepcion-hint">pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED · WS <code>ws://localhost:8000/ws/percepcion</code> (buffer 64KB · 10 FPS · reconexión exponencial)</div>
   `;
@@ -427,6 +428,21 @@ function initPercepcion() {
     loop();
   }
 
+  const resetBtn = percepcion.querySelector("#p-reset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", async () => {
+      try {
+        const r = await fetch("http://localhost:8000/fsm/reset", { method: "POST" });
+        const j = await r.json();
+        // feedback inmediato en overlay
+        overlay.handleEstado({ mission: j.mission || "IDLE" });
+        resetBtn.textContent = `Reset: ${j.mission}`;
+        setTimeout(() => { resetBtn.textContent = "Reset FSM"; }, 1200);
+      } catch (e) {
+        console.warn("[fsm] reset failed", e);
+      }
+    });
+  }
   startBtn.addEventListener("click", startCamera);
   mockBtn.addEventListener("click", () => {
     // mock sin backend: dibuja boxes demo y gesto random + v2 poses/depths/caption
