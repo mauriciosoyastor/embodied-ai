@@ -22,14 +22,15 @@
 - [Research: Instemic yolo-world-s ONNX 48.8MB validez y bench p50<80ms en i7-1255U](tickets/045-research-world-onnx-validez.md) — `Instemic 48.77MB HEAD 51142204 12.7M ✅ worldv2` `p50 57-70ms <80` `210MB` `opset19 txt_feats 8x512` `einsum` fix `onnxslim` — fuente primaria `YOLO_WORLD_URL = huggingface.co/Instemic/.../yolov8s-worldv2.onnx` fallback PT 24.7MB (2026-08-25)
 - [Research: contención ONNX intra2 vs 4 y presupuesto 10Hz+2Hz en 10c i7-1255U](tickets/046-research-contencion-10c.md) — `intra2 + 640` mantiene `glass 105/135ms <200` sin `dropped` (`8 hilos` vs `intra4 12 hilos saturado`); `480 28.3ms` solo si `yolo11n <30ms` con `-43% anchors` `110:17` (2026-08-25)
 - [Grilling: PromptList estática 20 curada final + i18n](tickets/047-grilling-promptlist.md) — `Opción A 20 atómicas` `en puro` + `list[str]` + `no "" background` + `CONTEXT.md PromptList Estática/Dinámica` + cache `txt_feats 20x512` + `asyncio Task` voz (2026-08-25)
+- [Grilling: integración ws.py slow_queue 2Hz + Whiteboard extension](tickets/048-grilling-integracion.md) — `piggyback slow_queue tick%10 2Hz` `AtributoVista is_world+prompt_origen` `cache _txt_feats_static 20x512 + warmup(10)` `_passes_world 0.35/0.25` `ByteTrack is_world` `world_infer_p50_ms` `ABORTED overlay-only` `intra2 pinning` `Zero-Copy` `SLA 135ms` (2026-08-25)
 
 ## Not yet specified
 
 <!-- fog hacia el destino — no ticketizable aún con nitidez; gradúa cuando la frontera avance -->
 
-- **Thresholds finos World-s (`box_thr 0.35 vs 0.50` + `text_thr 0.25`) y mapeo a `YOLO_CONF 0.5 / YOLO_PERSON_CONF 0.6` + `YOLO_AREA_MIN 0.03`** — fog hasta grilling PromptList (047) + research ONNX (045) defina distribución conf indoor oficina; gradúa a ticket de calibración tras bench real `r2:128`.
-- **Extensión `PercepcionVista` vs campo separado para `cls` world** — ¿`AtributoVista.cls` estático 30 + `cls_world?: string` dinámico o `cls` polimórfico con flag `is_world`? Fog hasta grilling integración (048).
-- **Métricas world específicas (`world_infer_p50_ms`, `world_prompt_encode_ms`, `cache_hit_txt_feats`) en `metrics.py:38` + `ws.py:739 record_yolo`** — fog hasta integration (048) decida separación `record_yolo` vs `record_world`.
+- **Overlay UX para detecciones world** — ¿badge color distinto, hex `color_hsv` + `color_vlm`, tooltip prompt origen? Fog post-048 (048 decidió `is_world` flag), gradúa a prototype overlay si 049 bench pide visual — fog remanente.
+- **Estrategia `IMGSZ 640 -> 480` para World-s `28ms`** `110:73` — fog hasta research contención (046) mida si 640 `68ms` + `yolo11n 56ms` paralelo excede `i7-1255U` con `pose+depth`; resuelto: mantener `640` para World-s `AP 18.5`, `480` solo `yolo11n <30ms` (046).
+- **Migración `descargar_modelos.py` a HuggingFace `hf download`** vs `urllib` directo — fog hasta task descarga (049) valide `Instemic` LFS 51MB vs `ultralytics/assets v8.2.0` PT 24.7MB.
 - **Overlay UX para detecciones world** — ¿badge color distinto, hex `color_hsv` + `color_vlm`, tooltip prompt origen? Fog post-048, gradúa a prototype overlay si 048 pide visual.
 - **Estrategia `IMGSZ 640 -> 480` para World-s `28ms`** `110:73` — fog hasta research contención (046) mida si 640 `68ms` + `yolo11n 56ms` paralelo excede `i7-1255U` con `pose+depth`.
 - **Migración `descargar_modelos.py` a HuggingFace `hf download`** vs `urllib` directo — fog hasta task descarga (049) valide `Instemic` LFS 51MB vs `ultralytics/assets v8.2.0` PT 24.7MB.
@@ -70,18 +71,18 @@
 
 **Estado:** cerrado — ver [047](tickets/047-grilling-promptlist.md) — `Opción A 20 atómicas` `en puro` `list[str]` `CONTEXT.md` 3 términos
 
-### Ticket 048 — Grilling: integración ws.py slow_queue 2Hz + Whiteboard extension [wayfinder:grilling] — ABIERTO (frontera 2026-08-25)
+### Ticket 048 — Grilling: integración ws.py slow_queue 2Hz + Whiteboard extension [wayfinder:grilling] — CERRADO 2026-08-25
 
 **Question:** Con datos 045+046+047: ¿`YoloWorldDetector` vive en `ws.py:637 slow_queue` 2Hz piggyback `pose/depth 5Hz` con `asyncio.gather(to_thread)` o cola `world_queue` separada? ¿Zero-Copy `img_view` reuse `ws.py:669` vs re-encode `txt_feats` cacheado? ¿`PercepcionVista.atributos` extiende `cls_world` + `color_hsv/color_vlm` o `WhiteboardState.world_detections` paralelo? ¿`ABORTED overlay-only` muta? `intra 2` unificado? HITL `grilling` + `domain-modeling` + `prototype` si necesita diagrama.
 
 **Bloquea:** 049
 
-**Estado:** abierto — frontera (desbloqueado tras 045+046+047) · Ver [048](tickets/048-grilling-integracion.md)
+**Estado:** cerrado — ver [048](tickets/048-grilling-integracion.md) — `piggyback tick%10` `AtributoVista is_world` `cache _txt_feats_static + warmup(10)` `world_infer_p50`
 
-### Ticket 049 — Task: pipeline descarga + flag + bench verificación [wayfinder:task] — ABIERTO
+### Ticket 049 — Task: pipeline descarga + flag + bench verificación [wayfinder:task] — ABIERTO (frontera 2026-08-25)
 
 **Question:** Trabajo que desbloquea verificación: añadir `YOLO_WORLD_URL` `https://huggingface.co/Instemic/yolo-world-onnx/resolve/main/yolov8s-worldv2.onnx` (o `ultralytics/assets v8.2.0 yolov8s-worldv2.pt 24.7MB` + export local) a `descargar_modelos.py:21` + `EXPECTED_SHA256` + `--world-url` flag + `models/.gitignore` entry, activar `YOLO_WORLD_ENABLED=True` `config.py:32` + `warmup(10)` `app.py lifespan` `yolo_world.py:32`, y ejecutar bench `r2:311` `hf download -> ort.InferenceSession bench sess.run n=20 p50<80ms` + `GET /metrics` 60s. AFK tras decisión 048.
 
 **Bloquea:** —
 
-**Estado:** abierto — bloqueado por 045,047,048 · Ver [049](tickets/049-task-descarga-bench.md)
+**Estado:** abierto — frontera (desbloqueado tras 048) · Ver [049](tickets/049-task-descarga-bench.md)

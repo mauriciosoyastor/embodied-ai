@@ -23,4 +23,17 @@ HITL `grilling` + `domain-modeling` + `prototype` (diagrama `fast 10Hz YOLO11n W
 
 ## Resolution
 
-> Estado: **abierto** — bloqueado. No claim hasta desbloqueo.
+> Estado: **cerrado** — 2026-08-25 · HITL grilling + domain-modeling · Resuelto en sesión con usuario (Q1-Q5 aprobados)
+
+### Decisión
+
+- **Q1 Topología slow 2Hz — Opción A piggyback:** reutilizar `slow_queue 5Hz` `ws.py:637` con gating `tick %10==0` → `world 2Hz` via `await asyncio.gather(to_thread(pose), to_thread(depth), to_thread(world))` 3-way si tick 10, sin nueva `world_queue` ni worker `asyncio` extra; evita thrashing `12 hilos` `046`; `~135ms` en 1 de cada 5 ticks slow no degrada `fast_queue 10Hz` `ws.py:636`.
+- **Q2 Whiteboard — Opción A extender AtributoVista:** `AtributoVista` `CONTEXT.md:134` añade `is_world: bool = False` + `prompt_origen: Optional[str] = None` — single-writer `WhiteboardState` `update_percepcion(atributos=...)` respeta `ABORTED` latch, evita duplicar `TTL 200ms`/`ttl_expirations`/`OTel`, `overlay.js` badge color distinto si `is_world`, `DecisionAgentica` consume mismo `list[AtributoVista]`.
+- **Q3 Caché txt_feats + Warmup:** `_txt_feats_static: np.ndarray 20x512` en `YoloWorldDetector` `yolo_world.py:31` precomputado `clip_encode(PROMPTLIST 20)` congelado al boot si `is_stub False` (no re-encode `8-15ms` `r2:284` por frame); `app.py lifespan` ejecuta `world.warmup(10)` dummy `1x3x640x640 + txt_feats 8x512` igual que `yolo.warmup(10)` `yolo.py:318` (`ORT_ENABLE_ALL` `yolo_world.py:38`).
+- **Q4 Filtros y Tracker:** nuevo `_passes_world(box)` con `box_thr=0.35 text_thr=0.25` `r2:128` independiente de `_passes_whitelist 0.5`; reutilizar `ByteTrack max_age30 iou0.5 tracker.py:38` + `LRUCache 64 IoU>0.85 TTL2s` con clave compuesta `is_world` evita colisiones `W30` vs `world` IDs.
+- **Q5 Métricas y ABORTED + Pinning:** métrica dedicada `world_infer_p50_ms` `metrics.py:38` via `record_world(ms)` separado de `yolo_infer_p50_ms` `ws.py:739` para `Prometheus/OTel` SLA; `ABORTED overlay-only` no muta `WhiteboardState` (solo `overlay.js`); pinning `OMP_NUM_THREADS=2 intra_op=2 inter_op=1 ORT_SEQUENTIAL` unificado `yolo.py:302`/`yolo_world.py:40`/`pose.py`/`depth.py` previene contención `gather(pose,depth,world)` en edge; `Zero-Copy img_view` `np.ndarray` view sin `.copy()` `ws.py:669` minimiza bus; monitoreo `world_infer_p50` + `dropped_frames_total` `metrics.py` audita `135ms` no satura.
+
+### Artefactos
+
+- Mapa `008` → `Decisions so far` apunta a este ticket; fog `Thresholds / PercepcionVista / Métricas world` graduado y limpio de `Not yet specified`.
+- `CONTEXT.md` ya con `PromptList` `047`; próximo `049` usará `is_world` + `_passes_world` + `world_infer_p50_ms`.
