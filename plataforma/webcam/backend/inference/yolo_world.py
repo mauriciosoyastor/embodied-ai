@@ -18,6 +18,7 @@ class YoloWorldDetector:
 
     Sin modelo: is_stub True, predict → [].
     Con modelo: usaría onnxruntime con txt_feats dinámico (stub).
+    048: cache _txt_feats_static 20x512 offline + warmup(10) piggyback slow 2Hz.
     """
 
     def __init__(
@@ -29,6 +30,7 @@ class YoloWorldDetector:
         self.prompt_list: list[str] = list(prompt_list or YOLO_WORLD_PROMPTLIST_STATIC)
         self.is_stub: bool = True
         self._session: Any | None = None
+        self._txt_feats_static: Any | None = None
         if model_path is not None and model_path.exists():
             try:
                 import onnxruntime as ort  # type: ignore
@@ -38,14 +40,29 @@ class YoloWorldDetector:
                     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 )
                 opts.intra_op_num_threads = 2
+                opts.inter_op_num_threads = 1
+                try:
+                    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL  # type: ignore
+                except Exception:
+                    pass
                 self._session = ort.InferenceSession(
                     str(model_path),
                     sess_options=opts,
                     providers=["CPUExecutionProvider"],
                 )
                 self.is_stub = False
+                # 048 cache offline txt_feats 20x512 (stub zeros; real CLIP ViT-B/32 512-d)  # noqa: E501
+                try:
+                    import numpy as np  # type: ignore
+
+                    self._txt_feats_static = np.zeros(
+                        (len(self.prompt_list), 512), dtype=np.float32
+                    )
+                except Exception:
+                    self._txt_feats_static = None
             except Exception:
                 self._session = None
+                self._txt_feats_static = None
                 self.is_stub = True
 
     def set_classes(self, prompts: list[str]) -> None:
@@ -56,6 +73,41 @@ class YoloWorldDetector:
             cleaned = cleaned[:8]
         if cleaned:
             self.prompt_list = cleaned
+            # invalidar cache txt_feats si dinámica (max 8)
+            try:
+                import numpy as np  # type: ignore
+
+                self._txt_feats_static = np.zeros(
+                    (len(self.prompt_list), 512), dtype=np.float32
+                )
+            except Exception:
+                self._txt_feats_static = None
+
+    def warmup(self, n: int = 10) -> None:
+        """Precalienta ORT graph + cache txt_feats — amortiza cold-start igual que YoloDetector."""  # noqa: E501
+        if self._session is None or self.is_stub:
+            return
+        try:
+            import numpy as np  # type: ignore
+
+            sess: Any = self._session
+            input_name: str = sess.get_inputs()[0].name  # type: ignore
+            dummy_img = np.random.randn(1, 3, 640, 640).astype(np.float32)
+            # dummy txt_feats 8x512 si modelo espera segundo input dinámico
+            dummy_txt = np.zeros((min(8, len(self.prompt_list)), 512), dtype=np.float32)
+            for _ in range(max(0, n)):
+                try:
+                    inputs = {input_name: dummy_img}
+                    # si modelo tiene 2 inputs, añadir txt_feats
+                    if len(sess.get_inputs()) > 1:  # type: ignore
+                        txt_name: str = sess.get_inputs()[1].name  # type: ignore
+                        inputs[txt_name] = dummy_txt
+                    sess.run(None, inputs)  # type: ignore
+                except Exception:
+                    # fallback solo imagen
+                    sess.run(None, {input_name: dummy_img})  # type: ignore
+        except Exception:
+            return
 
     def predict(
         self, image: Any | None = None, conf_thr: float | None = None

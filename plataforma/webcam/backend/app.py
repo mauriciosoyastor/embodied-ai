@@ -42,13 +42,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Gesture stub activo — model ausente (lazy)")
         else:
             logger.info("Gesture cargado: %s", gesture.model_path)
-        # Warmup ONNX/TensorRT — amortiza cold-start p99 120ms (041)
+        # Warmup ONNX/TensorRT — amortiza cold-start p99 120ms (041) + World-s 048
         try:
             if not yolo.is_stub:
                 yolo.warmup(10)
                 logger.info("YOLO warmup(10) ok")
         except Exception as exc:  # pragma: no cover
             logger.warning("YOLO warmup falló: %s", exc)
+        try:
+            from plataforma.webcam.backend.inference.yolo_world import (
+                get_yolo_world_detector,
+            )
+
+            world = get_yolo_world_detector()
+            if not world.is_stub:
+                world.warmup(10)
+                logger.info(
+                    "YOLO-World warmup(10) ok prompts=%d txt_feats=%s",
+                    len(world.prompt_list),
+                    getattr(world, "_txt_feats_static", None) is not None,
+                )
+            else:
+                logger.info(
+                    "YOLO-World stub — model ausente (lazy) prompts=%d",
+                    len(world.prompt_list),
+                )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("YOLO-World warmup falló: %s", exc)
         # Hidratar identities.json (hibrido)
         ids = await store.load()
         logger.info("Identities cargadas: %d", len(ids))

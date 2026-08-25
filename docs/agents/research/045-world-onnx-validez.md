@@ -69,14 +69,17 @@ Script repro (`plataforma/webcam/backend/inference/yolo.py` path idéntico):
 ```python
 import pathlib, time, numpy as np, onnxruntime as ort, psutil, os
 from plataforma.webcam.backend.inference.yolo import YoloDetector
+
 model = pathlib.Path("plataforma/webcam/backend/models/yolo11n.onnx")
 opts = ort.SessionOptions()
 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 opts.intra_op_num_threads = 2
 opts.inter_op_num_threads = 1
-sess = ort.InferenceSession(str(model), sess_options=opts, providers=["CPUExecutionProvider"])
+sess = ort.InferenceSession(
+    str(model), sess_options=opts, providers=["CPUExecutionProvider"]
+)
 det = YoloDetector(model)
-img = np.random.randint(0,255,(480,640,3), dtype=np.uint8)
+img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
 det.warmup(3)
 # glass (letterbox+blob+infer+NMS) 20 reps
 # sess.run puro 1×3×640×640 20 reps
@@ -184,10 +187,16 @@ Si `p50>80` re-evaluar `IMGSZ 480` (ver 110) o `intra4` con contención (ver 046
 
 ```python
 # YOLO-World s open-vocab (008-map) — Instemic ONNX dinámico txt_feats
-YOLO_WORLD_URL = "https://huggingface.co/Instemic/yolo-world-onnx/resolve/main/yolov8s-worldv2.onnx"
-YOLO_WORLD_PT_FALLBACK_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8s-worldv2.pt"
+YOLO_WORLD_URL = (
+    "https://huggingface.co/Instemic/yolo-world-onnx/resolve/main/yolov8s-worldv2.onnx"
+)
+YOLO_WORLD_PT_FALLBACK_URL = (
+    "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8s-worldv2.pt"
+)
 # HEAD verificado 2026-08-25: 51,142,204 B = 48.77 MB; card 48.8 MB; l 178.77 MB
-EXPECTED_SHA256["yolo-world-s.onnx"] = None  # fijar tras primera descarga exitosa, ver §6
+EXPECTED_SHA256["yolo-world-s.onnx"] = (
+    None  # fijar tras primera descarga exitosa, ver §6
+)
 MODELS["yolo-world-s.onnx"] = {"url": YOLO_WORLD_URL}
 # CLI: --world-url default YOLO_WORLD_URL, fallback --world-pt-url
 ```
