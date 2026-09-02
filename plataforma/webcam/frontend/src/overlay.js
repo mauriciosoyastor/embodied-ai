@@ -6,6 +6,7 @@
  */
 
 const COLORES = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#39c5cf"];
+const WORLD_COLOR = "#8e44ad"; // violeta World open-vocab (harness plan.overlay-world-ux)
 const GESTO_LITERALS = ["open_palm", "fist", "thumbs_up", "none"];
 
 // v2 postura: 17 keypoints COCO, edges para esqueleto
@@ -233,8 +234,9 @@ export function createOverlay({
         }
         if (bestIoU > 0.3) ident = best;
       }
+      const isWorld = b.is_world === true;
       const isPerson = b.cls === "person" && ident;
-      const color = isPerson ? colorForEstado(ident.estado) : COLORES[i % COLORES.length];
+      const color = isWorld ? WORLD_COLOR : (isPerson ? colorForEstado(ident.estado) : COLORES[i % COLORES.length]);
       // clamp [0,1] ya viene del backend, pero defendemos
       const x = Math.max(0, Math.min(1, Number(b.x) || 0)) * W;
       const y = Math.max(0, Math.min(1, Number(b.y) || 0)) * H;
@@ -243,17 +245,25 @@ export function createOverlay({
       const cls = String(b.cls ?? "obj");
       const conf = Math.max(0, Math.min(1, Number(b.conf) || 0));
 
-      // dashed si ambiguo/provisional (white REMIND)
-      if (ident && (ident.estado === "ambiguo" || ident.estado === "provisional")) ctx.setLineDash([6, 4]);
+      // dashed si World (open-vocab) o ambiguo/provisional (white REMIND)
+      if (isWorld || (ident && (ident.estado === "ambiguo" || ident.estado === "provisional"))) ctx.setLineDash([6, 4]);
       else ctx.setLineDash([]);
       ctx.strokeStyle = color;
       ctx.lineWidth = ident ? 2.5 : 2;
       ctx.strokeRect(x, y, w, h);
       ctx.setLineDash([]);
 
-      // etiqueta con fondo — Variante A badge si hay identidad (5 estados 042)
+      // etiqueta con fondo — Variante A badge si hay identidad (5 estados 042) + World open-vocab violeta
       let label;
-      if (ident) {
+      if (isWorld) {
+        const hex = b.color_hsv_hex ?? b.color_hex ?? "";
+        const col = b.color_hsv ?? b.color ?? "";
+        const prompt = b.prompt_origen ?? cls;
+        // World: 🌐 + clase + conf + color + hex + prompt origen (voz en->es-AR)
+        label = `🌐 ${cls} ${(conf * 100).toFixed(0)}%${col && col !== "unknown" ? ` ${col}` : ""}${hex ? ` ${hex}` : ""} · ${prompt}`.trim().replace(/\s+/g, " ");
+        // tooltip hover para World
+        if (canvas) canvas.title = `World: ${prompt} · ${col} ${hex} · is_world`;
+      } else if (ident) {
         if (ident.estado === "confirmado") label = `Hola ${ident.nombre} ✓ ${(1 - ident.cosine).toFixed(2)}`;
         else if (ident.estado === "posible") label = `posible ${ident.nombre}? ${ident.cosine.toFixed(2)}`;
         else if (ident.estado === "ambiguo") label = `? ${ident.nombre} blanco ${ident.cosine.toFixed(2)}`;

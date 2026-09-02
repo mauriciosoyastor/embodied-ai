@@ -153,3 +153,14 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Zero-Copy memoryview**: `ws.py:118 decode_jpeg_b64` usa `memoryview(raw)` → `np.frombuffer` view sin copy inter-proceso hacia `np.ndarray` (041).
 - **Dropped frames**: `metrics.py dropped_frames_total` counter `record_dropped_frame()` incrementado en `receiver` cuando `AsyncLeakyQueue.put` retorna `discarded=True` (fast/slow), expuesto `GET /metrics`.
 - **threshold_per_person**: `IdentidadVista.threshold_per_person?: float|null` debug opcional `0.42-0.65` per-person calibrado, `None` si `0.42` fijo (042 Fase1) — no rompe wire `detecciones.identities`.
+
+## Términos del harness P-E-V (Plan-Execute-Verify) — port de scraperargenpro
+
+- **Harness P-E-V**: loop `Plan → Execute en sandbox → Verify con sensores` portado de `scraperargenpro/harness/harness.py:300` (Ning et al. 2026 §3.4). Estado filesystem en `harness/` (`harness/harness.py:69` `ROOT/trajectory.jsonl`), traza append-only inspeccionable con `jq/grep`.
+- **3 tiers**: `read-only / sandbox-edit (default) / full-access` (`harness/harness.py:32` `TIERS`) con default restrictiva (`harness/harness.py:33` `DEFAULT_TIER=sandbox-edit`).
+- **Sensores B**: `pytest` + `ruff` + `mypy` + `domain_assertions` Embodied AI (`harness/harness.py:287` `CmdVel clamp ±1.0/±1.5`, `FakeAdapter frame_id avanza`, `SimObservation SI/world-frame`, `IdentitiesStore 128-d`) + `evidence bundle` (`harness/harness.py:86` `EvidenceBundle`).
+- **Traza A**: `harness/trajectory.jsonl` + `harness/sensor_logs/<run_id>.log` (`harness/harness.py:426` `append_trajectory`) — una línea JSON por fase `plan|execute|verify|done|human_gate`.
+- **Human gate (HITL B)**: `harness/harness.py:115` `check_permission` gatilla `needs-human` en destructivas (`rm -rf`, `push --force`, `.env`, `DROP`) o red no listada fuera de `ALLOWLIST_DOMAINS` (`localhost`, `huggingface.co`, `api.openai.com`).
+- **Sandbox-edit**: escribe solo `harness/output/` · `harness/trajectory.jsonl` · `harness/sensor_logs/` · `plataforma/webcam/backend/models/identities.json` (demo en `harness/output/sim_state.json` para no contaminar `.gitignore:22` `identities.json` real).
+- **Plan as Contract**: `harness/plan.example.json` · `harness/plan.sim-headless.json` · `harness/plan.webcam-percepcion.json` con `intent`, `files`, `invariants`, `validation`, `rollback`.
+- **Evidence bundle**: `{tests_run, linter, mypy, domain_assertions, uncovered, risk: low|medium|high, risk_reason}` + `human_gate{needed, reason, approved_by}` + `sensor_log` — criterio `verdict=ok` requiere `risk=low` + `tests_failed=0` + `domain ok`.
