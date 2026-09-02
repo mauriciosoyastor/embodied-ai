@@ -1,0 +1,8 @@
+{
+  "intent": "webcam percepcion v2 — Whitelist W30 + AtributoVista + ReID",
+  "files": ["plataforma/webcam/backend/ws.py", "plataforma/webcam/backend/yolo.py", "harness/trajectory.jsonl"],
+  "invariants": ["YOLO_WHITELIST 30 indoor", "AtributoVista centroide/tamano/color_hsv/z_rel", "ByteTrack track_id persistente", "Glass-to-Glass <200ms"],
+  "validation": ["uv run pytest plataforma/webcam -q", "uv run ruff check plataforma/webcam", "uv run mypy plataforma/webcam"],
+  "rollback": "git checkout -- plataforma/webcam/backend/ws.py",
+  "target_url": "https://huggingface.co/models/onnx"
+}

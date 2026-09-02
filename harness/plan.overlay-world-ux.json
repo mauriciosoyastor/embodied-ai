@@ -1,0 +1,18 @@
+{
+  "intent": "overlay World UX — is_world violeta + hex + prompt_origen (harness P-E-V)",
+  "files": ["plataforma/webcam/frontend/src/overlay.js", "harness/trajectory.jsonl"],
+  "invariants": [
+    "World is_world=true → borde violeta #8e44ad dashed [6,4], W30 sólido",
+    "badge muestra color_hsv_hex + prompt_origen (voz en->es-AR, ej. taza roja)",
+    "ABORTED overlay-only (ws.py:1074) sin mutar Whiteboard",
+    "LeakyQueue N=1 (10Hz fast / 2.5Hz world) sin dropped_frames",
+    "Glass-to-Glass <200ms"
+  ],
+  "validation": [
+    "uv run ruff check plataforma/webcam/frontend/src/overlay.js",
+    "uv run pytest plataforma/webcam -k overlay -q",
+    "harness domain_assertions: AtributoVista is_world+color_hsv_hex"
+  ],
+  "rollback": "git checkout -- plataforma/webcam/frontend/src/overlay.js",
+  "target_url": "http://localhost:5173"
+}

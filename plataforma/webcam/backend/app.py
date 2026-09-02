@@ -151,11 +151,46 @@ async def fsm_state() -> dict[str, str]:
 
 
 @app.post("/voz")
-async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista."""  # noqa: E501
+async def VozHandler(req: VozRequest) -> dict[str, str]:  # type: ignore[no-untyped-def]
+    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
+
+    Grounded harness (plan.voz-grounded): todo prompt se encierra con
+    Percepción viva last_atributos (≤500ms) para evitar hallucination Walmart.
+    """  # noqa: E501
     prompt = req.prompt.strip()
     if not prompt:
         return {"text": ""}
+
+    # Grounding previo: inyectar Percepción viva a TODO prompt (no solo is_color_q)
+    grounded_prefix = ""
+    try:
+        import time as _t
+
+        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
+
+        _age = int(_t.time() * 1000) - int(last_ts or 0)
+        if last_atributos and _age < 2000:
+            _descs = ", ".join(
+                [
+                    f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+                    f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                    f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+                    for a in last_atributos[:4]
+                ]
+            )
+            grounded_prefix = (
+                f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+                f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+                f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+            )
+        else:
+            grounded_prefix = "[Percepción: No veo objetos ahora (frame stale >2s).] "
+    except Exception:
+        grounded_prefix = ""
+    # prompt efectivo para LLM
+    prompt_grounded = (
+        f"{grounded_prefix}Usuario dice: {prompt}" if grounded_prefix else prompt
+    )
     # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
     try:
         low_q = prompt.lower()
@@ -296,11 +331,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
     has_hf = bool(os.getenv("HF_TOKEN", "").strip())
 
-    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock)
+    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock) — grounded
     if has_groq:
         try:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
-            text = gemini_client.responder(prompt, modelo=modelo)
+            text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
                 return {"text": text}
         except Exception as e:
@@ -319,7 +354,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             os.environ["OPENAI_BASE_URL"] = hf_base
             try:
                 text = gemini_client.responder(
-                    prompt, modelo="meta-llama/Llama-3.2-3B-Instruct"
+                    prompt_grounded, modelo="meta-llama/Llama-3.2-3B-Instruct"
                 )
                 if text.strip():
                     return {"text": text}
@@ -331,19 +366,19 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         except Exception as e:
             logger.warning("HF Router fallo: %s", e)
 
-    # 3) Intentar Gemini legacy
+    # 3) Intentar Gemini legacy — grounded
     if has_google:
         try:
             modelo = (
                 os.getenv("GEMINI_MODEL", "").strip()
                 or gemini_client.MODELO_GEMINI_LEGACY
             )
-            text = gemini_client.responder(prompt, modelo=modelo)
+            text = gemini_client.responder(prompt_grounded, modelo=modelo)
             return {"text": text}
         except Exception as e:
             logger.warning("Gemini fallo: %s", e)
 
-    # 4) Intentar OpenAI fallback (usa GROQ_MODEL si existe, sino gpt-3.5-turbo)
+    # 4) Intentar OpenAI fallback (usa GROQ_MODEL si existe, sino gpt-3.5-turbo) — grounded  # noqa: E501
     if has_openai:
         try:
             from openai import OpenAI
@@ -357,7 +392,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             fallback_model = os.getenv("GROQ_MODEL", "").strip() or "gpt-3.5-turbo"
             resp = client.chat.completions.create(
                 model=fallback_model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt_grounded}],
             )
             txt = (resp.choices[0].message.content or "").strip()
             if txt:
@@ -365,9 +400,14 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
 
-    # 3) Mock final segun patrones
-    low = prompt.lower()
+    # 3) Mock final segun patrones — grounded (usa prefix si hay percepción)
+    low = prompt_grounded.lower()
     if "hola" in low:
+        # si hay percepción, responder grounded
+        if grounded_prefix and "person" in grounded_prefix.lower():
+            return {
+                "text": f"¡Hola! Veo {grounded_prefix.split('Percepción viva')[1][:120] if 'Percepción viva' in grounded_prefix else 'person'} (mock grounded)."  # noqa: E501
+            }
         return {
             "text": (
                 "¡Hola! Soy Muse Spark 1.2 free vía OpenAI (fallback). "
@@ -387,6 +427,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 "Soy Muse Spark 1.2, orquestador cognitivo de Embodied AI. "
                 "(fallback OpenAI)"
             )
+        }
+    # fallback grounded: si había percepción, devolverla; sino genérico
+    if grounded_prefix:
+        return {
+            "text": f'{grounded_prefix} Recibí: "{prompt}" (mock grounded — sin LLM).'
         }
     return {
         "text": (

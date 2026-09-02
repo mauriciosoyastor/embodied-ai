@@ -1,0 +1,8 @@
+{
+  "intent": "demo: validar sim headless + traza (run ok)",
+  "files": ["harness/output/sim_state.json", "harness/trajectory.jsonl"],
+  "invariants": ["CmdVel v_x±1.0 omega±1.5", "FakeAdapter frame_id avanza", "SimObservation SI/world-frame"],
+  "validation": ["python -m pytest -q", "ruff check .", "mypy . --ignore-missing-imports", "domain assertions CmdVel/SimObservation"],
+  "rollback": "git checkout -- harness/output/sim_state.json",
+  "target_url": "http://localhost:8000/health"
+}

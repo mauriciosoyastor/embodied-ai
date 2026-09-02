@@ -26,6 +26,9 @@ plataforma/webcam/frontend/src/*.identities
 *.log
 *.err
 MUJOCO_LOG.TXT
-# Artefactos de agentes locales (OpenCode)
+# Harness P-E-V (port scraperargenpro) — traza y outputs demo
+harness/trajectory.jsonl
+harness/sensor_logs/
+harness/output/
 trajectory.jsonl
 .opencode/

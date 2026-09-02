@@ -1,0 +1,8 @@
+{
+  "intent": "sim headless TDD — FakeAdapter + TestModel sin MuJoCo/red",
+  "files": ["plataforma/sim/tests/test_harness.py", "harness/trajectory.jsonl"],
+  "invariants": ["SimObservation x/y/yaw SI", "CmdVel clamp ValidationError", "TestModel custom_output DecisionAgentica"],
+  "validation": ["uv run pytest plataforma/sim -q", "uv run ruff check plataforma/sim", "uv run mypy plataforma/sim"],
+  "rollback": "git checkout -- plataforma/sim/tests/test_harness.py",
+  "target_url": "http://localhost:8000/ws/percepcion"
+}
