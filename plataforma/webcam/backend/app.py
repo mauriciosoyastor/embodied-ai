@@ -129,6 +129,72 @@ def _es_charla(prompt: str) -> bool:
     return not any(k in low for k in _VISION_KEYWORDS)
 
 
+# Pregunta que SÍ afirma visión (requiere percepción fresca; sin ella G3 calla).
+# Incluye personas: "¿quién hay?", "¿ves a alguien?", "¿hay gente?".
+_PERSONA_KEYWORDS = (
+    "persona",
+    "personas",
+    "alguien",
+    "gente",
+    "quién hay",
+    "quien hay",
+    "quién está",
+    "quien esta",
+    "ves a",
+    "se ve",
+    "cuánt",
+    "cuant",
+)
+
+
+def _es_pregunta_visual(prompt: str) -> bool:
+    """True si el prompt pide visión (objetos o personas)."""
+    low = prompt.lower()
+    if any(k in low for k in _VISION_KEYWORDS):
+        return True
+    return any(k in low for k in _PERSONA_KEYWORDS)
+
+
+# Clases COCO → es-AR para respuestas habladas (el detector habla inglés).
+_CLS_ES: dict[str, str] = {
+    "person": "persona",
+    "chair": "silla",
+    "couch": "sillón",
+    "bottle": "botella",
+    "cup": "taza",
+    "cell phone": "celular",
+    "laptop": "notebook",
+    "keyboard": "teclado",
+    "mouse": "mouse",
+    "book": "libro",
+    "backpack": "mochila",
+    "handbag": "cartera",
+    "remote": "control remoto",
+    "tv": "tele",
+    "bed": "cama",
+    "dining table": "mesa",
+    "toilet": "inodoro",
+    "potted plant": "planta",
+    "microwave": "microondas",
+    "oven": "horno",
+    "sink": "pileta",
+    "refrigerator": "heladera",
+    "clock": "reloj",
+    "vase": "florero",
+    "toaster": "tostadora",
+    "wine glass": "copa",
+    "bowl": "bol",
+    "scissors": "tijera",
+    "teddy bear": "peluche",
+    "toothbrush": "cepillo de dientes",
+}
+
+
+def _cls_es(cls: str) -> str:
+    """Nombre en es-AR para una clase del detector (fallback: original)."""
+    return _CLS_ES.get(str(cls or "").strip().lower(), str(cls))
+
+
 def _fresh_snapshot(
     max_age_ms: int = FRESH_ATRIBUTOS_MS,
 ) -> tuple[list[dict[str, Any]], int, int] | None:
@@ -315,12 +381,14 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         return {"text": ""}
 
     # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
-    # Excepción: saludo/smalltalk y acuse conversacional (no afirman visión)
-    # pasan sin cámara.
+    # Solo las preguntas visuales (objetos o personas) callan sin cámara.
+    # Charla genérica ("contame algo", "¿y entonces?") pasa pelada al LLM
+    # para conversar fluido sin afirmar visión (no inventa por system prompt).
     es_saludo = _es_saludo(prompt)
     es_charla = _es_charla(prompt)
+    es_visual = _es_pregunta_visual(prompt)
     snapshot = _fresh_snapshot()
-    if snapshot is None and not es_saludo and not es_charla:
+    if snapshot is None and es_visual and not es_charla:
         return {"text": ""}
     if snapshot is None:
         last_atributos: list[dict[str, Any]] = []
@@ -355,21 +423,45 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         )
         # prompt efectivo para LLM
         prompt_grounded = f"{grounded_prefix}Usuario dice: {prompt}"
-    # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
+    # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves/
+    # personas, responder desde last_atributos (determinista, sin LLM).
     try:
         low_q = prompt.lower()
-        is_color_q = any(
+        is_persona_q = any(
             k in low_q
             for k in [
-                "color",
-                "tamaño",
-                "tamano",
-                "qué ves",
-                "que ves",
-                "izquierda",
-                "derecha",
-                "distancia",
+                "persona",
+                "personas",
+                "alguien",
+                "gente",
+                "quién hay",
+                "quien hay",
+                "quién está",
+                "quien esta",
+                "hay gente",
             ]
+        )
+        is_color_q = (
+            any(
+                k in low_q
+                for k in [
+                    "color",
+                    "tamaño",
+                    "tamano",
+                    "qué ves",
+                    "que ves",
+                    "qué hay",
+                    "que hay",
+                    "izquierda",
+                    "derecha",
+                    "distancia",
+                    "cuánt",
+                    "cuant",
+                    "objeto",
+                    "objetos",
+                ]
+            )
+            or is_persona_q
         )
         if is_color_q:
             # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
@@ -380,10 +472,32 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     target = next(
                         (a for a in last_atributos if a.get("cls") == "cup"), None
                     )
-                elif "tv" in low_q:
+                elif "tv" in low_q or "tele" in low_q:
                     target = next(
                         (a for a in last_atributos if a.get("cls") == "tv"), None
                     )
+                elif is_persona_q:
+                    target = next(
+                        (a for a in last_atributos if a.get("cls") == "person"),
+                        None,
+                    )
+                    if target is None:
+                        return {"text": strip_grounding_leak("No veo personas ahora.")}
+                    persons = [a for a in last_atributos if a.get("cls") == "person"]
+                    if "cuánt" in low_q or "cuant" in low_q:
+                        n_p = len(persons)
+                        return {
+                            "text": strip_grounding_leak(
+                                f"Veo {n_p} persona{'s' if n_p != 1 else ''}."
+                            )
+                        }
+                    n_persons = len(persons)
+                    plural_p = "s" if n_persons != 1 else ""
+                    return {
+                        "text": strip_grounding_leak(
+                            f"Sí, hay {n_persons} persona{plural_p} en cámara."
+                        )
+                    }
                 # relaciones espaciales: izquierda/derecha por centroide
                 if "izquierda" in low_q or "derecha" in low_q and "taza" in low_q:
                     sorted_at = sorted(
@@ -409,26 +523,33 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                             a = left[-1]
                             return {
                                 "text": strip_grounding_leak(
-                                    f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                    f"A la izquierda de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
                                 )
                             }
                         if "derecha" in low_q and right:
                             a = right[0]
                             return {
                                 "text": strip_grounding_leak(
-                                    f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                    f"A la derecha de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
                                 )
                             }
                 if target and "color" in low_q:
                     return {
                         "text": strip_grounding_leak(
-                            f"La {target.get('cls')} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
+                            f"La {_cls_es(str(target.get('cls')))} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
                         )
                     }
-                if "qué ves" in low_q or "que ves" in low_q:
+                if (
+                    "qué ves" in low_q
+                    or "que ves" in low_q
+                    or "qué hay" in low_q
+                    or "que hay" in low_q
+                    or "objeto" in low_q
+                    or "objetos" in low_q
+                ):
                     descs = ", ".join(
                         [
-                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"  # noqa: E501
+                            f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"  # noqa: E501
                             for a in last_atributos[:4]
                         ]
                     )
@@ -441,7 +562,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 if target:
                     return {
                         "text": strip_grounding_leak(
-                            f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')}."  # noqa: E501
+                            f"Veo {_cls_es(str(target.get('cls')))} {target.get('color')} {target.get('tamano')}."  # noqa: E501
                         )
                     }
     except Exception:
@@ -530,7 +651,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         _resp = _ollama.chat.completions.create(
             model=ollama_model,
             messages=_messages,  # type: ignore[arg-type]
-            timeout=15,
+            timeout=10,
             temperature=0.6,
             max_tokens=150,
             extra_body={
@@ -632,7 +753,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     if snapshot is not None and last_atributos:
         _n = len(last_atributos)
         _descs = ", ".join(
-            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"
+            f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"
             for a in last_atributos[:4]
         )
         return {

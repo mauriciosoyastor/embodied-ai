@@ -153,7 +153,7 @@ def test_edad_captura_ahora_responde(monkeypatch: pytest.MonkeyPatch) -> None:
     # age 684ms (captura real CPU ~800ms/infer): con TTL 2000ms es fresca.
     _fijar_percepcion(monkeypatch, _atributos(), 684)
     text = _preguntar("¿qué ves?")["text"]
-    assert text == "Veo 1 objeto: person naranja grande."
+    assert text == "Veo 1 objeto: persona naranja grande."
 
 
 def test_saludo_con_visual_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -191,28 +191,51 @@ def _sin_veto(text: str) -> None:
 def test_que_ves_natural_sin_debug(monkeypatch: pytest.MonkeyPatch) -> None:
     _fijar_percepcion(monkeypatch, _atributos(), 100)
     text = _preguntar("¿qué ves?")["text"]
-    assert text == "Veo 1 objeto: person naranja grande."
+    assert text == "Veo 1 objeto: persona naranja grande."
     _sin_veto(text)
 
 
 def test_que_ves_plural(monkeypatch: pytest.MonkeyPatch) -> None:
     _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
     text = _preguntar("¿qué ves?")["text"]
-    assert text == "Veo 2 objetos: person naranja grande, cup roja pequeño."
+    assert text == "Veo 2 objetos: persona naranja grande, taza roja pequeño."
     _sin_veto(text)
 
 
 def test_color_taza_natural(monkeypatch: pytest.MonkeyPatch) -> None:
     _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
     text = _preguntar("¿qué color tiene la taza?")["text"]
-    assert text == "La cup es roja tamaño pequeño."
+    assert text == "La taza es roja tamaño pequeño."
     _sin_veto(text)
 
 
 def test_izquierda_taza_natural(monkeypatch: pytest.MonkeyPatch) -> None:
     _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
     text = _preguntar("¿qué hay a la izquierda de la taza?")["text"]
-    assert text == "A la izquierda de la taza está person naranja grande."
+    assert text == "A la izquierda de la taza está persona naranja grande."
+    _sin_veto(text)
+
+
+def test_quien_hay_persona(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    text = _preguntar("¿quién hay en cámara?")["text"]
+    assert "persona" in text.lower()
+    assert "hay 1 persona" in text.lower()
+    _sin_veto(text)
+
+
+def test_hay_alguien_sin_personas(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, [_taza()], 100)
+    text = _preguntar("¿hay alguien ahí?")["text"]
+    assert text == "No veo personas ahora."
+    _sin_veto(text)
+
+
+def test_que_hay_objetos_es(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
+    text = _preguntar("¿qué hay?")["text"]
+    assert text.startswith("Veo 2 objetos:")
+    assert "persona" in text and "taza" in text
     _sin_veto(text)
 
 
@@ -225,7 +248,7 @@ def test_mock_silencio_total_g3(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _preguntar("hola")["text"].startswith("¡Hola!")
     assert _preguntar("¿quién sos?")["text"].startswith("¡Hola!")
     # Sin clasificar pero CON visión fresca: describe, no calla (G3 intacto).
-    assert _preguntar("contame algo")["text"] == "Veo 1 objeto: person naranja grande."
+    assert _preguntar("contame algo")["text"] == "Veo 1 objeto: persona naranja grande."
 
 
 def test_fragmento_stt_describe_escena(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -235,7 +258,7 @@ def test_fragmento_stt_describe_escena(monkeypatch: pytest.MonkeyPatch) -> None:
     _sin_red(monkeypatch)
     _fijar_percepcion(monkeypatch, _atributos(), 681)
     text = _preguntar("qué")["text"]
-    assert text == "Veo 1 objeto: person naranja grande."
+    assert text == "Veo 1 objeto: persona naranja grande."
     _sin_veto(text)
 
 
@@ -336,7 +359,7 @@ def test_historial_multiturno_llega_a_ollama(monkeypatch: pytest.MonkeyPatch) ->
     assert msgs[0]["role"] == "system"
     assert any(m["content"] == "Veo una taza." for m in msgs)
     assert msgs[-1]["role"] == "user"
-    assert capturado.get("timeout") == 15
+    assert capturado.get("timeout") == 10
     _sin_veto(text)
 
 
@@ -493,3 +516,85 @@ def test_ack_charla_no_pasa_por_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
     assert _preguntar("perfecto")["text"] == "Entendido, te sigo escuchando."
     assert _preguntar("dale")["text"] == "Entendido, te sigo escuchando."
+
+
+def test_pregunta_visual_incluye_personas() -> None:
+    from plataforma.webcam.backend.app import _es_pregunta_visual
+
+    assert _es_pregunta_visual("¿quién hay en cámara?") is True
+    assert _es_pregunta_visual("¿hay alguien ahí?") is True
+    assert _es_pregunta_visual("¿ves a alguien?") is True
+    assert _es_pregunta_visual("¿qué ves?") is True
+    assert _es_pregunta_visual("contame algo") is False
+    assert _es_pregunta_visual("¿y entonces qué hacemos?") is False
+
+
+def test_charla_generica_stale_va_a_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fluidez: charla genérica sin cámara NO calla si hay LLM vivo —
+    # va pelada al LLM sin afirmar visión (no repite "iniciá la cámara").
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    class _Msg:
+        content = "Seguimos charlando, te escucho."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar("¿y entonces qué hacemos?")["text"]
+    assert text == "Seguimos charlando, te escucho."
+
+
+def test_visual_stale_silencia_aunque_haya_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G3 intacto: pregunta visual sin frescura calla aunque haya LLM.
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    class _Msg:
+        content = "Invento objetos."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    assert _preguntar("¿qué ves?") == {"text": ""}
+    assert _preguntar("¿hay alguien ahí?") == {"text": ""}
