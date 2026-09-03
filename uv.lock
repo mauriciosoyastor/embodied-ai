@@ -3048,6 +3048,7 @@ dependencies = [
     { name = "opencv-python" },
     { name = "pydantic" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -3066,6 +3067,7 @@ requires-dist = [
     { name = "opencv-python", specifier = "==4.14.*" },
     { name = "pydantic", specifier = ">=2" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.metadata.requires-dev]
