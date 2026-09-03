@@ -23,14 +23,76 @@ from plataforma.webcam.backend.ws import perception_ws_handler
 logger = logging.getLogger(__name__)
 
 
+class TurnoHistorial(BaseModel):
+    role: str
+    content: str
+
+
 class VozRequest(BaseModel):
     prompt: str
     modelo: str | None = None
+    historial: list[TurnoHistorial] | None = None
 
 
 # Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
-FRESH_ATRIBUTOS_MS = 200
+# 2000ms en vez de 200ms: con inferencia CPU ~800ms/frame + envío 2Hz toda
+# percepción "fresca" real llega con ~700-1000ms de edad; 200ms solo servía
+# con GPU. Para conversar, una foto de hace 1s sigue siendo válida.
+FRESH_ATRIBUTOS_MS = 2000
 FRESH_Z_MS = 500
+
+# Saludo/smalltalk que NO afirma nada visual: no requiere percepción fresca.
+_SALUDO_KEYWORDS = (
+    "hola",
+    "buenas",
+    "cómo estás",
+    "como estas",
+    "qué tal",
+    "que tal",
+    "quién sos",
+    "quien sos",
+    "cómo te llam",
+    "como te llam",
+    "gracias",
+    "chau",
+    "adiós",
+    "adios",
+    "buen día",
+    "buenas tardes",
+    "buenas noches",
+)
+# Si el prompt trae alguna de estas, es pregunta visual aunque empiece con hola.
+_VISION_KEYWORDS = (
+    "color",
+    "tamaño",
+    "tamano",
+    "qué ves",
+    "que ves",
+    "qué hay",
+    "que hay",
+    "izquierda",
+    "derecha",
+    "distancia",
+    "cerca",
+    "lejos",
+    "mira",
+    "mirá",
+    "busca",
+    "buscá",
+    "dónde",
+    "donde",
+    "taza",
+    "cup",
+    "tv",
+)
+
+
+def _es_saludo(prompt: str) -> bool:
+    """True si es smalltalk sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _SALUDO_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
 
 
 def _fresh_snapshot(
@@ -208,7 +270,8 @@ async def fsm_state() -> dict[str, str]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
+    """Proxy voz: Ollama local primero, Groq/HF/Gemini backup, mock final.
+    S3 anclaje AtributoVista.
 
     Grounded harness (mapa #130): todo prompt se encierra con
     Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
@@ -217,31 +280,39 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     if not prompt:
         return {"text": ""}
 
-    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma nada.
+    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
+    # Excepción: saludo/smalltalk (no afirma visión) pasa sin cámara.
+    es_saludo = _es_saludo(prompt)
     snapshot = _fresh_snapshot()
-    if snapshot is None:
+    if snapshot is None and not es_saludo:
         return {"text": ""}
-    last_atributos, last_frame_id, _age = snapshot
+    if snapshot is None:
+        last_atributos: list[dict[str, Any]] = []
+        last_frame_id, _age = 0, 0
+    else:
+        last_atributos, last_frame_id, _age = snapshot
 
-    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt.
-    # Este prefijo alimenta LLMs pero NUNCA sale en `text` (ver T1 checklist).
-    _descs = ", ".join(
-        [
-            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
-            f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
-            f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
-            for a in last_atributos[:4]
-        ]
-    )
-    grounded_prefix = (
-        f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
-        f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
-        f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
-    )
-    # prompt efectivo para LLM
-    prompt_grounded = (
-        f"{grounded_prefix}Usuario dice: {prompt}" if grounded_prefix else prompt
-    )
+    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
+    # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para
+    # que el LLM no invente objetos: un saludo no necesita grounding.
+    if snapshot is None:
+        prompt_grounded = prompt
+    else:
+        _descs = ", ".join(
+            [
+                f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+                f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+                for a in last_atributos[:4]
+            ]
+        )
+        grounded_prefix = (
+            f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+            f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+            f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+        )
+        # prompt efectivo para LLM
+        prompt_grounded = f"{grounded_prefix}Usuario dice: {prompt}"
     # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
     try:
         low_q = prompt.lower()
@@ -378,7 +449,64 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
     has_hf = bool(os.getenv("HF_TOKEN", "").strip())
 
-    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock) — grounded
+    # 0) Ollama local PRIMARIO (gratis/offline; docs 020-ollama-fallback).
+    #    Env: OLLAMA_BASE_URL (default 127.0.0.1:11434/v1),
+    #    OLLAMA_MODEL (default qwen2.5:1.5b). Default IPv4 explícita:
+    #    `localhost` puede resolver a ::1 donde Docker Desktop hace relay
+    #    a OTRO Ollama sin nuestros modelos. Si el daemon no está,
+    #    falla rápido (connect) y sigue la cadena hospedada.
+    ollama_base = (
+        os.getenv("OLLAMA_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
+    )
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip() or "qwen2.5:1.5b"
+    # Conversación fluida: memoria multi-turno + system conciso es-AR.
+    # Sin historial el contrato viejo (solo prompt) sigue idéntico.
+    _system = (
+        "Sos un asistente de voz en español rioplatense. "
+        "Respondé corto (1-2 frases, máximo 60 palabras), "
+        "conversacional, sin listas ni tecnicismos. "
+        "Si hay percepción viva entre corchetes, usala; si no, no inventes objetos."
+    )
+    _hist: list[dict[str, str]] = []
+    try:
+        for t in req.historial or []:
+            r = (t.role or "").strip().lower()
+            c = (t.content or "").strip()
+            if r not in ("user", "assistant") or not c:
+                continue
+            _hist.append({"role": r, "content": c[:500]})
+        _hist = _hist[-6:]
+    except Exception:
+        _hist = []
+    _messages: list[dict[str, str]] = [{"role": "system", "content": _system}]
+    _messages.extend(_hist)
+    _messages.append({"role": "user", "content": prompt_grounded})
+    try:
+        from openai import OpenAI
+
+        _ollama = OpenAI(api_key="ollama", base_url=ollama_base)
+        _resp = _ollama.chat.completions.create(
+            model=ollama_model,
+            messages=_messages,  # type: ignore[arg-type]
+            timeout=15,
+            temperature=0.6,
+            max_tokens=150,
+            extra_body={
+                "options": {
+                    "temperature": 0.6,
+                    "num_predict": 120,
+                    "num_ctx": 2048,
+                },
+                "keep_alive": "5m",
+            },
+        )
+        _txt = (_resp.choices[0].message.content or "").strip()
+        if _txt:
+            return {"text": strip_grounding_leak(_txt)}
+    except Exception as e:
+        logger.warning("Ollama fallo: %s", e)
+
+    # 1) Groq secundario (antes primario Ticket 021) — grounded
     if has_groq:
         try:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
@@ -450,6 +578,26 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # Mock final (mapa #130 G3): silencio total — el mock nunca afirma visión
     # ni devuelve el prefijo (era el leak de la captura). Las respuestas
     # deterministas con visión fresca ya salieron por atajos S3 arriba.
+    # Excepción: saludo — no afirma visión, así que responde determinista
+    # en vez de callar (conversación fluida sin cámara ni keys).
+    if es_saludo:
+        return {
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        }
+    # Fragmento/pregunta no clasificada CON visión fresca: describir lo que
+    # se ve en vez de callar (el STT continuo suele entregar fragmentos como
+    # "qué" de "qué ves"). G3 intacto: solo afirma datos frescos reales.
+    if snapshot is not None and last_atributos:
+        _n = len(last_atributos)
+        _descs = ", ".join(
+            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"
+            for a in last_atributos[:4]
+        )
+        return {
+            "text": strip_grounding_leak(
+                f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}."
+            )
+        }
     return {"text": ""}
 
 

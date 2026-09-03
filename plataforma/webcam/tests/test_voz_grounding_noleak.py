@@ -58,6 +58,40 @@ def _sin_proveedores(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
+def _sin_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cadena LLM que falla rápido: sin sondas de red (hermético + veloz).
+
+    `VozHandler` recarga `fase-1/.env` con `load_dotenv`, así que borrar env
+    no alcanza: las keys reales vuelven y cada intento 403 quema segundos,
+    envejeciendo el snapshot más allá del TTL entre asserts.
+    """
+
+    def _raise(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("sin red en tests")
+
+    stub = types.SimpleNamespace(responder=_raise, MODELO_DEFECTO="stub")
+    monkeypatch.setitem(sys.modules, "gemini_client", stub)
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("sin red en tests")
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+
+
+def _sin_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Solo la rama Ollama falla rápido (el resto de la cadena sigue real/stub).
+
+    Para tests que verifican ramas hospedadas con el daemon Ollama vivo.
+    """
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("sin ollama en tests")
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+
+
 def _taza() -> dict[str, Any]:
     return {
         "cls": "cup",
@@ -70,9 +104,18 @@ def _taza() -> dict[str, Any]:
     }
 
 
-def _preguntar(prompt: str) -> dict[str, str]:
+def _preguntar(
+    prompt: str, historial: list[dict[str, str]] | None = None
+) -> dict[str, str]:
     async def _inner() -> dict[str, str]:
-        return await VozHandler(VozRequest(prompt=prompt))
+        from plataforma.webcam.backend.app import TurnoHistorial
+
+        turns = (
+            [TurnoHistorial(role=t["role"], content=t["content"]) for t in historial]
+            if historial
+            else None
+        )
+        return await VozHandler(VozRequest(prompt=prompt, historial=turns))
 
     return asyncio.run(_inner())
 
@@ -83,15 +126,42 @@ def test_prompt_vacio_silencio(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sin_atributos_silencio(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sin_ollama(monkeypatch)
     _fijar_percepcion(monkeypatch, [], 100)
     assert _preguntar("¿qué ves?") == {"text": ""}
 
 
 def test_stale_silencio_g1(monkeypatch: pytest.MonkeyPatch) -> None:
-    # age 1699ms (captura) supera TTL 200ms → la voz calla aunque haya datos.
-    _fijar_percepcion(monkeypatch, _atributos(), 1699)
+    # age 5000ms supera TTL 2000ms → la voz calla en preguntas visuales.
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
     assert _preguntar("¿qué ves?") == {"text": ""}
-    assert _preguntar("hola") == {"text": ""}
+
+
+def test_stale_saludo_responde_sin_vision(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El saludo no afirma visión: responde aunque la percepción esté vieja.
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    text = _preguntar("hola, ¿cómo estás?")["text"]
+    assert text.startswith("¡Hola!")
+    _sin_veto(text)
+
+
+def test_edad_captura_ahora_responde(monkeypatch: pytest.MonkeyPatch) -> None:
+    # age 684ms (captura real CPU ~800ms/infer): con TTL 2000ms es fresca.
+    _fijar_percepcion(monkeypatch, _atributos(), 684)
+    text = _preguntar("¿qué ves?")["text"]
+    assert text == "Veo 1 objeto: person naranja grande."
+
+
+def test_saludo_con_visual_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "hola, ¿qué ves?" trae keyword visual → no es saludo puro: sin
+    # percepción fresca calla igual que cualquier pregunta visual.
+    _sin_proveedores(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    assert _preguntar("hola, ¿qué ves?") == {"text": ""}
 
 
 def test_fresco_color_q_responde_s3(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,12 +217,156 @@ def test_izquierda_taza_natural(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mock_silencio_total_g3(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Sin proveedores el handler cae al mock: G3 manda silencio, jamás eco.
+    # Sin proveedores el handler cae al mock: G3 manda silencio en lo visual,
+    # jamás eco; el saludo responde determinista (no afirma visión).
     _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
     _fijar_percepcion(monkeypatch, _atributos(), 100)
-    assert _preguntar("hola") == {"text": ""}
-    assert _preguntar("¿quién sos?") == {"text": ""}
+    assert _preguntar("hola")["text"].startswith("¡Hola!")
+    assert _preguntar("¿quién sos?")["text"].startswith("¡Hola!")
+    # Sin clasificar pero CON visión fresca: describe, no calla (G3 intacto).
+    assert _preguntar("contame algo")["text"] == "Veo 1 objeto: person naranja grande."
+
+
+def test_fragmento_stt_describe_escena(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El STT continuo entrega fragmentos ("qué" de "qué ves"): con visión
+    # fresca se describe la escena en vez de mandar "iniciá la cámara".
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 681)
+    text = _preguntar("qué")["text"]
+    assert text == "Veo 1 objeto: person naranja grande."
+    _sin_veto(text)
+
+
+def test_sin_vision_y_sin_clasificar_calla(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sin visión fresca y sin saludo: silencio total aunque haya mock.
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
     assert _preguntar("contame algo") == {"text": ""}
+
+
+def test_ollama_primario_responde(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Rama 0 Ollama con cliente stub exitoso: responde LLM real-like con
+    # grounding (prefijo inyectado pero sanitizado en salida).
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+
+    class _Msg:
+        content = "Hola, veo que hay una persona."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar("contame algo interesante")["text"]
+    assert "persona" in text
+    _sin_veto(text)
+
+
+def test_historial_multiturno_llega_a_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Conversación fluida: system + historial + user van en messages.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    capturado: dict[str, Any] = {}
+
+    class _Msg:
+        content = "Claro, era roja."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            capturado.update(k)
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar(
+        "¿y su color?",
+        historial=[
+            {"role": "user", "content": "¿qué ves?"},
+            {"role": "assistant", "content": "Veo una taza."},
+        ],
+    )["text"]
+    assert "roja" in text.lower() or "claro" in text.lower()
+    msgs = capturado.get("messages", [])
+    assert msgs[0]["role"] == "system"
+    assert any(m["content"] == "Veo una taza." for m in msgs)
+    assert msgs[-1]["role"] == "user"
+    assert capturado.get("timeout") == 15
+    _sin_veto(text)
+
+
+def test_sin_historial_compat_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Contrato viejo prompt-only: system + user, sin turnos intermedios.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    capturado: dict[str, Any] = {}
+
+    class _Msg:
+        content = "Hola."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            capturado.update(k)
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    assert _preguntar("contame algo")["text"] == "Hola."
+    msgs = capturado.get("messages", [])
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "system"
 
 
 def test_strip_legitimo_intacto() -> None:
@@ -184,6 +398,7 @@ def _stub_gemini_eco(monkeypatch: pytest.MonkeyPatch, eco: str) -> None:
 
 def test_eco_llm_sanitizado(monkeypatch: pytest.MonkeyPatch) -> None:
     # Un proveedor que repite el prefijo no debe filtrarlo a la UI.
+    _sin_ollama(monkeypatch)
     _fijar_percepcion(monkeypatch, _atributos(), 100)
     _stub_gemini_eco(
         monkeypatch,
