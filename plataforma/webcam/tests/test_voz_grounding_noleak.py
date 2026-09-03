@@ -40,6 +40,30 @@ def _fijar_percepcion(
     monkeypatch.setattr(ws_mod, "last_ts", now_ms - age_ms)
 
 
+def _sin_proveedores(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in (
+        "GROQ_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "HF_TOKEN",
+        "GROQ_MODEL",
+        "GEMINI_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _taza() -> dict[str, Any]:
+    return {
+        "cls": "cup",
+        "color": "roja",
+        "tamano": "pequeño",
+        "color_hsv_hex": "#aa2222",
+        "z_rel": None,
+        "area": 0.02,
+        "centroide": {"x_c": 0.7, "y_c": 0.6},
+    }
+
+
 def _preguntar(prompt: str) -> dict[str, str]:
     async def _inner() -> dict[str, str]:
         return await VozHandler(VozRequest(prompt=prompt))
@@ -68,3 +92,58 @@ def test_fresco_color_q_responde_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     _fijar_percepcion(monkeypatch, _atributos(), 100)
     resp = _preguntar("¿qué ves?")
     assert resp["text"].startswith("Veo")
+
+
+VETO_TOKENS = (
+    "responde SOLO",
+    "Instrucción grounding",
+    "mock grounded",
+    "Percepción viva",
+    "frame #",
+    "age ",
+    "z:",
+    "WORLD:",
+)
+
+
+def _sin_veto(text: str) -> None:
+    for token in VETO_TOKENS:
+        assert token not in text
+    assert not any(f"#{h}" in text for h in ("67e22", "aa2222"))
+
+
+def test_que_ves_natural_sin_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    text = _preguntar("¿qué ves?")["text"]
+    assert text == "Veo 1 objeto: person naranja grande."
+    _sin_veto(text)
+
+
+def test_que_ves_plural(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
+    text = _preguntar("¿qué ves?")["text"]
+    assert text == "Veo 2 objetos: person naranja grande, cup roja pequeño."
+    _sin_veto(text)
+
+
+def test_color_taza_natural(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
+    text = _preguntar("¿qué color tiene la taza?")["text"]
+    assert text == "La cup es roja tamaño pequeño."
+    _sin_veto(text)
+
+
+def test_izquierda_taza_natural(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fijar_percepcion(monkeypatch, _atributos() + [_taza()], 100)
+    text = _preguntar("¿qué hay a la izquierda de la taza?")["text"]
+    assert text == "A la izquierda de la taza está person naranja grande."
+    _sin_veto(text)
+
+
+def test_mock_silencio_total_g3(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sin proveedores el handler cae al mock: G3 manda silencio, jamás eco.
+    _sin_proveedores(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    assert _preguntar("hola") == {"text": ""}
+    assert _preguntar("¿quién sos?") == {"text": ""}
+    assert _preguntar("contame algo") == {"text": ""}

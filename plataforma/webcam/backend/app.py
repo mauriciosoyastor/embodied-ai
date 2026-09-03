@@ -230,7 +230,6 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         )
         if is_color_q:
             # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
-            age = _age
             if last_atributos:
                 # buscar taza/cup si pregunta específica, sino listar todos
                 target = None
@@ -266,7 +265,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         if "izquierda" in low_q and left:
                             a = left[-1]
                             return {
-                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')} a z {a.get('z_rel') or 'desconocida'} (frame #{last_frame_id})."  # noqa: E501
+                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
                             }
                         if "derecha" in low_q and right:
                             a = right[0]
@@ -275,21 +274,22 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                             }
                 if target and "color" in low_q:
                     return {
-                        "text": f"La {target.get('cls')} es {target.get('color')} ({target.get('color_hsv_hex')}) tamaño {target.get('tamano')} área {round(float(target.get('area', 0)) * 100)}% a distancia {target.get('z_rel') or 'media'} (frame #{last_frame_id}, age {age}ms)."  # noqa: E501
+                        "text": f"La {target.get('cls')} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
                     }
                 if "qué ves" in low_q or "que ves" in low_q:
                     descs = ", ".join(
                         [
-                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} z{a.get('z_rel') or '?'}"  # noqa: E501
+                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"  # noqa: E501
                             for a in last_atributos[:4]
                         ]
                     )
+                    n = len(last_atributos)
                     return {
-                        "text": f"Veo {len(last_atributos)} objetos (frame #{last_frame_id}): {descs}."  # noqa: E501
+                        "text": f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
                     }
                 if target:
                     return {
-                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')} (frame #{last_frame_id})."  # noqa: E501
+                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')}."  # noqa: E501
                     }
     except Exception:
         pass
@@ -312,15 +312,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     k in low2
                     for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
                 ):  # noqa: E501
-                    try:
-                        from plataforma.webcam.backend.ws import (
-                            last_frame_id as _fid,  # noqa: E501
-                        )
-                    except Exception:
-                        _fid = 0
-                    return {
-                        "text": f"Buscando {', '.join(prompts)} (YOLO-World dinámico, frame #{_fid})."  # noqa: E501
-                    }
+                    return {"text": f"Buscando {', '.join(prompts)}."}
     except Exception:
         pass
     import os
@@ -413,45 +405,10 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
 
-    # 3) Mock final segun patrones — grounded (usa prefix si hay percepción)
-    low = prompt_grounded.lower()
-    if "hola" in low:
-        # si hay percepción, responder grounded
-        if grounded_prefix and "person" in grounded_prefix.lower():
-            return {
-                "text": f"¡Hola! Veo {grounded_prefix.split('Percepción viva')[1][:120] if 'Percepción viva' in grounded_prefix else 'person'} (mock grounded)."  # noqa: E501
-            }
-        return {
-            "text": (
-                "¡Hola! Soy Muse Spark 1.2 free vía OpenAI (fallback). "
-                "¿Como te registro por camara? Mirá y hacé pulgar arriba."
-            )
-        }
-    if "registr" in low:
-        return {
-            "text": (
-                "Perfecto, para registrarte mirá a la camara y "
-                "hacé pulgar arriba. (fallback OpenAI)"
-            )
-        }
-    if "quien" in low:
-        return {
-            "text": (
-                "Soy Muse Spark 1.2, orquestador cognitivo de Embodied AI. "
-                "(fallback OpenAI)"
-            )
-        }
-    # fallback grounded: si había percepción, devolverla; sino genérico
-    if grounded_prefix:
-        return {
-            "text": f'{grounded_prefix} Recibí: "{prompt}" (mock grounded — sin LLM).'
-        }
-    return {
-        "text": (
-            f'Recibio: "{prompt}" (fallback OpenAI — '
-            "Gemini y OpenAI no disponibles por el momento)."
-        )
-    }
+    # Mock final (mapa #130 G3): silencio total — el mock nunca afirma visión
+    # ni devuelve el prefijo (era el leak de la captura). Las respuestas
+    # deterministas con visión fresca ya salieron por atajos S3 arriba.
+    return {"text": ""}
 
 
 class VisionCaptionRequest(BaseModel):
