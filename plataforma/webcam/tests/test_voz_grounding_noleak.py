@@ -8,13 +8,19 @@ Criterio: pytest plataforma/webcam/tests/test_voz_grounding_noleak.py verde.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
+import types
 from typing import Any
 
 import pytest
 
 from plataforma.webcam.backend import ws as ws_mod
-from plataforma.webcam.backend.app import VozHandler, VozRequest
+from plataforma.webcam.backend.app import (
+    VozHandler,
+    VozRequest,
+    strip_grounding_leak,
+)
 
 
 def _atributos() -> list[dict[str, Any]]:
@@ -147,3 +153,48 @@ def test_mock_silencio_total_g3(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _preguntar("hola") == {"text": ""}
     assert _preguntar("¿quién sos?") == {"text": ""}
     assert _preguntar("contame algo") == {"text": ""}
+
+
+def test_strip_legitimo_intacto() -> None:
+    text = "Veo 1 objeto: person naranja grande."
+    assert strip_grounding_leak(text) == text
+    # Idempotente.
+    assert strip_grounding_leak(strip_grounding_leak(text)) == text
+
+
+def test_strip_quita_eco_prefijo() -> None:
+    eco = (
+        "[Percepción viva frame #72 age 100ms: person naranja grande #67e22 z:?] "
+        "Instrucción grounding: responde SOLO sobre lo que ves. "
+        "Útil frame #72 (mock grounded)."
+    )
+    limpio = strip_grounding_leak(eco)
+    _sin_veto(limpio)
+    assert "Útil" in limpio
+
+
+def _stub_gemini_eco(monkeypatch: pytest.MonkeyPatch, eco: str) -> None:
+    def _responder(prompt: str, modelo: str = "") -> str:
+        _ = (prompt, modelo)
+        return eco
+
+    stub = types.SimpleNamespace(responder=_responder, MODELO_DEFECTO="stub")
+    monkeypatch.setitem(sys.modules, "gemini_client", stub)
+
+
+def test_eco_llm_sanitizado(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Un proveedor que repite el prefijo no debe filtrarlo a la UI.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    _stub_gemini_eco(
+        monkeypatch,
+        "[Percepción viva frame #72 age 100ms: person naranja] "
+        "Instrucción grounding: responde SOLO sobre lo que ves. "
+        "Veo una persona frame #72 #67e22 z:? WORLD:cup (mock grounded).",
+    )
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    for var in ("GOOGLE_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    # Prompt no-color para saltear atajos S3 y llegar a la cadena LLM.
+    text = _preguntar("contame algo interesante")["text"]
+    _sin_veto(text)
+    assert "Veo una persona" in text

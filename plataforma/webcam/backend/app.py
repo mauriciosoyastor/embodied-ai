@@ -6,6 +6,7 @@ Lifespan lazy: inicializa YOLO+MediaPipe si models presentes, loguea si stub.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -51,6 +52,35 @@ def _fresh_snapshot(
     except Exception:
         pass
     return None
+
+
+# Veto G2/T1: todo lo que jamás debe llegar a la UI (ni TTS ni panel).
+_LEAK_PATTERNS = (
+    r"\[Percepci[^\]]*\]",  # eco del prefijo [...] (mock verbatim, paso 2)
+    r"Instrucci.n grounding:[^.]*\.",
+    r"responde SOLO[^.]*\.",
+    r"\(mock grounded[^)]*\)",
+    r"mock grounded[^.\n]*",
+    r"frame #\d+",
+    r"age \d+ms",
+    r"#[0-9a-fA-F]{3,8}\b",
+    r"\bz:\?",
+    r"\bWORLD:[^\s]*",
+)
+_LEAK_RE = re.compile("|".join(_LEAK_PATTERNS))
+_EMPTY_PARENS_RE = re.compile(r"\(\s*\)")
+_SPACES_RE = re.compile(r"[ \t]{2,}")
+
+
+def strip_grounding_leak(text: str) -> str:
+    """Defensa en profundidad: quita ecos de grounding/debug de una salida.
+
+    Se aplica a TODA respuesta `text` (incluido texto LLM, que puede repetir
+    el prefijo). Idempotente; el contenido legítimo pasa intacto.
+    """
+    cleaned = _LEAK_RE.sub("", text)
+    cleaned = _EMPTY_PARENS_RE.sub("", cleaned)
+    return _SPACES_RE.sub(" ", cleaned).strip()
 
 
 @asynccontextmanager
@@ -265,16 +295,22 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         if "izquierda" in low_q and left:
                             a = left[-1]
                             return {
-                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                         if "derecha" in low_q and right:
                             a = right[0]
                             return {
-                                "text": f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                 if target and "color" in low_q:
                     return {
-                        "text": f"La {target.get('cls')} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"La {target.get('cls')} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
+                        )
                     }
                 if "qué ves" in low_q or "que ves" in low_q:
                     descs = ", ".join(
@@ -285,11 +321,15 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     )
                     n = len(last_atributos)
                     return {
-                        "text": f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
+                        )
                     }
                 if target:
                     return {
-                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')}."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')}."  # noqa: E501
+                        )
                     }
     except Exception:
         pass
@@ -312,7 +352,9 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     k in low2
                     for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
                 ):  # noqa: E501
-                    return {"text": f"Buscando {', '.join(prompts)}."}
+                    return {
+                        "text": strip_grounding_leak(f"Buscando {', '.join(prompts)}.")
+                    }
     except Exception:
         pass
     import os
@@ -342,7 +384,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
-                return {"text": text}
+                return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Groq fallo: %s", e)
 
@@ -362,7 +404,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     prompt_grounded, modelo="meta-llama/Llama-3.2-3B-Instruct"
                 )
                 if text.strip():
-                    return {"text": text}
+                    return {"text": strip_grounding_leak(text)}
             finally:
                 if orig_base:
                     os.environ["OPENAI_BASE_URL"] = orig_base
@@ -379,7 +421,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 or gemini_client.MODELO_GEMINI_LEGACY
             )
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
-            return {"text": text}
+            return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Gemini fallo: %s", e)
 
@@ -401,7 +443,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             )
             txt = (resp.choices[0].message.content or "").strip()
             if txt:
-                return {"text": txt}
+                return {"text": strip_grounding_leak(txt)}
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
 
