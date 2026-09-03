@@ -493,6 +493,27 @@ function initPercepcion() {
     const mockDepths = [{ z_rel: 0.42, box_center: { x: 0.325, y: 0.4 } }, { z_rel: 0.71, box_center: { x: 0.64, y: 0.41 } }];
     overlay.handleDetecciones({ boxes: demoBoxes, poses: [mockPose], depths: mockDepths });
     handleSceneCaption({ caption: "Una persona junto a una silla en interior.", objects: ["person", "chair"], provider: "mock", conf: 0.88 });
+    // Mock honesto: alimenta panel AtributoVista local y marca mock (no alimenta /voz backend).
+    try {
+      lastAtributos = demoBoxes.map((b, i) => ({
+        cls: b.cls,
+        color: "—",
+        tamano: "—",
+        track_id: 900 + i,
+        centroide: { x_c: b.x + b.w / 2, y_c: b.y + b.h / 2 },
+        z_rel: mockDepths[i] ? mockDepths[i].z_rel : null,
+        ts: Date.now(),
+        mock: true,
+      }));
+      renderAtributos();
+    } catch {}
+    try {
+      window.__mockActive = true;
+      if (providerEl) {
+        providerEl.textContent = "· mock local — no alimenta /voz";
+        providerEl.style.opacity = "0.9";
+      }
+    } catch {}
     try {
       enrollment.handleDetecciones({ boxes: demoBoxes });
     } catch {}

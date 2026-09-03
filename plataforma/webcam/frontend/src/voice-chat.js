@@ -250,7 +250,10 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
       sendToLLM(normalized).then((reply) => {
         if (typeof reply === 'string' && reply.startsWith('__SIN_CAMARA__')) {
           lastBackend = 'sin-percepcion';
-          const msg = 'No veo objetos ahora — iniciá la cámara para que te describa lo que ve.';
+          const isMock = typeof window !== 'undefined' && window.__mockActive;
+          const msg = isMock
+            ? 'Mock activo (demo local, no alimenta /voz) — iniciá la cámara para percepción real.'
+            : 'No veo objetos ahora — iniciá la cámara para que te describa lo que ve.';
           transcripts.push({ role: 'bot', text: msg });
           renderTranscript();
           speak(msg);
