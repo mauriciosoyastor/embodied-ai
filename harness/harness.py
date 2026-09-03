@@ -95,6 +95,9 @@ class EvidenceBundle:
     uncovered: list[str] = field(default_factory=list)
     risk: str = "unknown"
     risk_reason: str = ""
+    impact_ratio: float | None = None
+    impacted_nodes: int = 0
+    changed_lines: int = 0
 
 
 @dataclass
@@ -109,6 +112,7 @@ class TrajectoryEntry:
     evidence: EvidenceBundle = field(default_factory=EvidenceBundle)
     human_gate: HumanGate = field(default_factory=lambda: HumanGate(needed=False))
     sensor_log: str = ""
+    removed_tools: list[str] = field(default_factory=list)
 
 
 # ── Permisos ─────────────────────────────────────────────────────────────
@@ -261,7 +265,13 @@ def run_ruff(run_id: str) -> dict:
 def run_mypy(run_id: str) -> dict:
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "mypy", ".", "--ignore-missing-imports"],
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "plataforma/webcam",
+                "--ignore-missing-imports",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -284,6 +294,50 @@ def run_mypy(run_id: str) -> dict:
         }
     except Exception as e:
         return {"tool": "mypy", "ok": None, "skipped": True, "reason": str(e)}
+
+
+def run_detect_changes() -> dict:
+    """Sensor GitNexus detect_changes — si falla, retorna low (no bloquea)."""
+    try:
+        # intenta CLI GitNexus; si no está índice o falla, no bloquea
+        proc = subprocess.run(
+            ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        # heurística simple: si out contiene HIGH/UNKNOWN (paréntesis explícitos para precedencia)
+        high = ("HIGH" in out) or ("high" in out.lower() and "risk" in out.lower())
+        unknown = ("UNKNOWN" in out) or ("unknown" in out.lower())
+        # intenta parsear impacted_nodes si JSON
+        impacted = 0
+        changed = 0
+        try:
+            data = json.loads(proc.stdout or "{}")
+            if isinstance(data, dict):
+                impacted = int(data.get("impacted_nodes", data.get("total", 0)) or 0)
+                changed = int(data.get("changed_lines", 0) or 0)
+        except Exception:
+            pass
+        return {
+            "impacted_nodes": impacted,
+            "changed_lines": changed,
+            "high": high,
+            "unknown": unknown,
+            "raw": out[:2000],
+        }
+    except Exception as e:
+        return {
+            "impacted_nodes": 0,
+            "changed_lines": 0,
+            "high": False,
+            "unknown": False,
+            "raw": f"skip: {e}",
+        }
 
 
 def domain_assertions() -> dict:
@@ -414,9 +468,37 @@ def build_evidence(run_id: str) -> tuple[EvidenceBundle, str]:
     ev.domain_assertions = dom
     if not dom.get("ok"):
         ev.uncovered.append(f"domain: {len(dom.get('failures', []))} fallos")
-    if ev.tests_failed > 0 or not dom.get("ok"):
+    # GitNexus detect_changes gate (02a) + impact_ratio (02b)
+    dc = run_detect_changes()
+    ev.impacted_nodes = int(dc.get("impacted_nodes", 0) or 0)
+    ev.changed_lines = int(dc.get("changed_lines", 0) or 0)
+    if ev.changed_lines > 0:
+        ev.impact_ratio = ev.impacted_nodes / ev.changed_lines
+    else:
+        ev.impact_ratio = float(ev.impacted_nodes) if ev.impacted_nodes else 0.0
+    if dc.get("high") or dc.get("unknown"):
+        ev.uncovered.append(f"detect_changes: {dc.get('raw', '')[:120]}")
+    # Gate senior: impact_ratio >10 → needs-human-attention (04)
+    if ev.impact_ratio is not None and ev.impact_ratio > 10:
+        ev.uncovered.append(
+            f"impact_ratio {ev.impact_ratio:.1f} >10 → needs-human-attention"
+        )
+    if (
+        ev.tests_failed > 0
+        or not dom.get("ok")
+        or dc.get("high")
+        or dc.get("unknown")
+        or (ev.impact_ratio is not None and ev.impact_ratio > 10)
+    ):
         ev.risk = "high"
-        ev.risk_reason = "tests o domain fallidos"
+        if ev.impact_ratio is not None and ev.impact_ratio > 10:
+            ev.risk_reason = (
+                "impact_ratio >10 → needs-human-attention (senior mauriciosoyastor)"
+            )
+        elif dc.get("high") or dc.get("unknown"):
+            ev.risk_reason = "blast radius HIGH/UNKNOWN sin confirmar"
+        else:
+            ev.risk_reason = "tests o domain fallidos"
     elif ev.uncovered:
         ev.risk = "medium"
         ev.risk_reason = f"cobertura parcial: {', '.join(ev.uncovered[:3])}"

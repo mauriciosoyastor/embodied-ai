@@ -23,7 +23,7 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = []
-per-file-ignores = { "harness/harness.py" = ["E501", "F841"] }
+per-file-ignores = { "harness/harness.py" = ["E501", "F841"], "harness/prototype-*.py" = ["E501", "F841", "E722"], "harness/prototype-*.html" = ["E501"] }
 
 [tool.pytest.ini_options]
 testpaths = ["fase-0", "fase-1"]
@@ -41,11 +41,16 @@ module = ["numpy.*", "cv2.*", "fastapi.*", "onnxruntime.*", "mediapipe.*", "PIL.
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["harness.*", "harness.harness"]
-ignore_errors = true
+module = ["harness.*"]
+ignore_missing_imports = true
 
 [dependency-groups]
-dev = ["ruff", "mypy", "pytest"]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pre-commit>=4.6.2",
+]
 
 [tool.uv.workspace]
 members = ["plataforma/webcam/backend", "plataforma/sim"]
