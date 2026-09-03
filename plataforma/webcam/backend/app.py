@@ -104,6 +104,31 @@ def _es_saludo(prompt: str) -> bool:
     return not any(k in low for k in _VISION_KEYWORDS)
 
 
+# Acuse conversacional que NO afirma nada visual (perfecto, genial, dale):
+# como el saludo, pasa sin cámara para no repetir "No veo objetos".
+_CHARLA_KEYWORDS = (
+    "perfecto",
+    "genial",
+    "buenísimo",
+    "buenisimo",
+    "excelente",
+    "bárbaro",
+    "barbaro",
+    "entendido",
+    "de nada",
+    "dale",
+    "jaja",
+)
+
+
+def _es_charla(prompt: str) -> bool:
+    """True si es acuse sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _CHARLA_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
+
+
 def _fresh_snapshot(
     max_age_ms: int = FRESH_ATRIBUTOS_MS,
 ) -> tuple[list[dict[str, Any]], int, int] | None:
@@ -290,16 +315,24 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         return {"text": ""}
 
     # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
-    # Excepción: saludo/smalltalk (no afirma visión) pasa sin cámara.
+    # Excepción: saludo/smalltalk y acuse conversacional (no afirman visión)
+    # pasan sin cámara.
     es_saludo = _es_saludo(prompt)
+    es_charla = _es_charla(prompt)
     snapshot = _fresh_snapshot()
-    if snapshot is None and not es_saludo:
+    if snapshot is None and not es_saludo and not es_charla:
         return {"text": ""}
     if snapshot is None:
         last_atributos: list[dict[str, Any]] = []
         last_frame_id, _age = 0, 0
     else:
         last_atributos, last_frame_id, _age = snapshot
+
+    # Acuse conversacional: respuesta determinista SIN pasar por el LLM.
+    # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados (con o
+    # sin historial), y ese eco realimenta el historial ("repite lo mismo").
+    if es_charla:
+        return {"text": "Entendido, te sigo escuchando."}
 
     # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
     # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para

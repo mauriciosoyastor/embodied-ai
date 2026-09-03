@@ -437,3 +437,59 @@ def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None
     assert _preguntar("hola, ¿qué objetos ves?") == {"text": ""}
     _fijar_percepcion(monkeypatch, _atributos(), 100)
     assert _preguntar("objetos")["text"].startswith("Veo")
+
+
+def test_ack_charla_no_repite_no_veo(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "perfecto" es charla (no afirma visión): jamás silencio G3,
+    # con o sin percepción fresca. Fija el "repite lo mismo".
+    from plataforma.webcam.backend.app import _es_charla
+
+    assert _es_charla("perfecto") is True
+    assert _es_charla("perfecto, ¿qué ves?") is False
+    assert _es_charla("hola, ¿cómo estás?") is False
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    fresco = _preguntar("perfecto")["text"]
+    assert fresco == "Entendido, te sigo escuchando."
+    _sin_veto(fresco)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    stale = _preguntar("perfecto")["text"]
+    assert stale == "Entendido, te sigo escuchando."
+    _sin_veto(stale)
+
+
+def test_ack_charla_no_pasa_por_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados: el acuse
+    # se cortocircuita determinista ANTES de la cadena LLM aunque haya
+    # proveedor vivo (Docker ollama con modelo pulleado).
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    class _Msg:
+        content = "No veo objetos ahora."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    assert _preguntar("perfecto")["text"] == "Entendido, te sigo escuchando."
+    assert _preguntar("dale")["text"] == "Entendido, te sigo escuchando."
