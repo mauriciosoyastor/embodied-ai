@@ -21,7 +21,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
-    websockets \
+    "websockets==16.1.1" \
     "onnxruntime==1.29.*" \
     "opencv-python==4.14.*" \
     "mediapipe==1.0.1" \
