@@ -6,6 +6,7 @@ Lifespan lazy: inicializa YOLO+MediaPipe si models presentes, loguea si stub.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -22,9 +23,126 @@ from plataforma.webcam.backend.ws import perception_ws_handler
 logger = logging.getLogger(__name__)
 
 
+class TurnoHistorial(BaseModel):
+    role: str
+    content: str
+
+
 class VozRequest(BaseModel):
     prompt: str
     modelo: str | None = None
+    historial: list[TurnoHistorial] | None = None
+
+
+# Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
+# 2000ms en vez de 200ms: con inferencia CPU ~800ms/frame + envío 2Hz toda
+# percepción "fresca" real llega con ~700-1000ms de edad; 200ms solo servía
+# con GPU. Para conversar, una foto de hace 1s sigue siendo válida.
+FRESH_ATRIBUTOS_MS = 2000
+FRESH_Z_MS = 500
+
+# Saludo/smalltalk que NO afirma nada visual: no requiere percepción fresca.
+_SALUDO_KEYWORDS = (
+    "hola",
+    "buenas",
+    "cómo estás",
+    "como estas",
+    "qué tal",
+    "que tal",
+    "quién sos",
+    "quien sos",
+    "cómo te llam",
+    "como te llam",
+    "gracias",
+    "chau",
+    "adiós",
+    "adios",
+    "buen día",
+    "buenas tardes",
+    "buenas noches",
+)
+# Si el prompt trae alguna de estas, es pregunta visual aunque empiece con hola.
+_VISION_KEYWORDS = (
+    "color",
+    "tamaño",
+    "tamano",
+    "qué ves",
+    "que ves",
+    "qué hay",
+    "que hay",
+    "izquierda",
+    "derecha",
+    "distancia",
+    "cerca",
+    "lejos",
+    "mira",
+    "mirá",
+    "busca",
+    "buscá",
+    "dónde",
+    "donde",
+    "taza",
+    "cup",
+    "tv",
+)
+
+
+def _es_saludo(prompt: str) -> bool:
+    """True si es smalltalk sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _SALUDO_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
+
+
+def _fresh_snapshot(
+    max_age_ms: int = FRESH_ATRIBUTOS_MS,
+) -> tuple[list[dict[str, Any]], int, int] | None:
+    """Snapshot (atributos, frame_id, age_ms) si la percepción está fresca.
+
+    Lee los globales de `ws` con import diferido (sin ciclo). `None` = stale
+    o ausente: la voz no debe afirmar nada (silencio G3).
+    """
+    try:
+        import time as _t
+
+        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
+
+        age = int(_t.time() * 1000) - int(last_ts or 0)
+        if last_atributos and age <= max_age_ms:
+            return list(last_atributos), int(last_frame_id), age
+    except Exception:
+        pass
+    return None
+
+
+# Veto G2/T1: todo lo que jamás debe llegar a la UI (ni TTS ni panel).
+_LEAK_PATTERNS = (
+    r"\[Percepci[^\]]*\]",  # eco del prefijo [...] (mock verbatim, paso 2)
+    r"Instrucci.n grounding:[^.]*\.",
+    r"responde SOLO[^.]*\.",
+    r"\(mock grounded[^)]*\)",
+    r"mock grounded[^.\n]*",
+    r"frame #\d+",
+    r"age \d+ms",
+    r"#[0-9a-fA-F]{3,8}\b",
+    r"\bz:\?",
+    r"\bWORLD:[^\s]*",
+)
+_LEAK_RE = re.compile("|".join(_LEAK_PATTERNS))
+_EMPTY_PARENS_RE = re.compile(r"\(\s*\)")
+_SPACES_RE = re.compile(r"[ \t]{2,}")
+
+
+def strip_grounding_leak(text: str) -> str:
+    """Defensa en profundidad: quita ecos de grounding/debug de una salida.
+
+    Se aplica a TODA respuesta `text` (incluido texto LLM, que puede repetir
+    el prefijo). Idempotente; el contenido legítimo pasa intacto.
+    """
+    cleaned = _LEAK_RE.sub("", text)
+    cleaned = _EMPTY_PARENS_RE.sub("", cleaned)
+    return _SPACES_RE.sub(" ", cleaned).strip()
 
 
 @asynccontextmanager
@@ -152,45 +270,49 @@ async def fsm_state() -> dict[str, str]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
+    """Proxy voz: Ollama local primero, Groq/HF/Gemini backup, mock final.
+    S3 anclaje AtributoVista.
 
-    Grounded harness (plan.voz-grounded): todo prompt se encierra con
-    Percepción viva last_atributos (≤500ms) para evitar hallucination Walmart.
+    Grounded harness (mapa #130): todo prompt se encierra con
+    Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
     """  # noqa: E501
     prompt = req.prompt.strip()
     if not prompt:
         return {"text": ""}
 
-    # Grounding previo: inyectar Percepción viva a TODO prompt (no solo is_color_q)
-    grounded_prefix = ""
-    try:
-        import time as _t
+    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
+    # Excepción: saludo/smalltalk (no afirma visión) pasa sin cámara.
+    es_saludo = _es_saludo(prompt)
+    snapshot = _fresh_snapshot()
+    if snapshot is None and not es_saludo:
+        return {"text": ""}
+    if snapshot is None:
+        last_atributos: list[dict[str, Any]] = []
+        last_frame_id, _age = 0, 0
+    else:
+        last_atributos, last_frame_id, _age = snapshot
 
-        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
-
-        _age = int(_t.time() * 1000) - int(last_ts or 0)
-        if last_atributos and _age < 2000:
-            _descs = ", ".join(
-                [
-                    f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
-                    f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
-                    f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
-                    for a in last_atributos[:4]
-                ]
-            )
-            grounded_prefix = (
-                f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
-                f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
-                f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
-            )
-        else:
-            grounded_prefix = "[Percepción: No veo objetos ahora (frame stale >2s).] "
-    except Exception:
-        grounded_prefix = ""
-    # prompt efectivo para LLM
-    prompt_grounded = (
-        f"{grounded_prefix}Usuario dice: {prompt}" if grounded_prefix else prompt
-    )
+    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
+    # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para
+    # que el LLM no invente objetos: un saludo no necesita grounding.
+    if snapshot is None:
+        prompt_grounded = prompt
+    else:
+        _descs = ", ".join(
+            [
+                f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+                f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+                for a in last_atributos[:4]
+            ]
+        )
+        grounded_prefix = (
+            f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+            f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+            f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+        )
+        # prompt efectivo para LLM
+        prompt_grounded = f"{grounded_prefix}Usuario dice: {prompt}"
     # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
     try:
         low_q = prompt.lower()
@@ -208,17 +330,8 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             ]
         )
         if is_color_q:
-            import time
-
-            from plataforma.webcam.backend.ws import (
-                last_atributos,
-                last_frame_id,
-                last_ts,
-            )
-
-            now_ms = int(time.time() * 1000)
-            age = now_ms - int(last_ts or 0)
-            if last_atributos and age < 500:
+            # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
+            if last_atributos:
                 # buscar taza/cup si pregunta específica, sino listar todos
                 target = None
                 if "taza" in low_q or "cup" in low_q:
@@ -253,30 +366,41 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         if "izquierda" in low_q and left:
                             a = left[-1]
                             return {
-                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')} a z {a.get('z_rel') or 'desconocida'} (frame #{last_frame_id})."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                         if "derecha" in low_q and right:
                             a = right[0]
                             return {
-                                "text": f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                 if target and "color" in low_q:
                     return {
-                        "text": f"La {target.get('cls')} es {target.get('color')} ({target.get('color_hsv_hex')}) tamaño {target.get('tamano')} área {round(float(target.get('area', 0)) * 100)}% a distancia {target.get('z_rel') or 'media'} (frame #{last_frame_id}, age {age}ms)."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"La {target.get('cls')} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
+                        )
                     }
                 if "qué ves" in low_q or "que ves" in low_q:
                     descs = ", ".join(
                         [
-                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} z{a.get('z_rel') or '?'}"  # noqa: E501
+                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"  # noqa: E501
                             for a in last_atributos[:4]
                         ]
                     )
+                    n = len(last_atributos)
                     return {
-                        "text": f"Veo {len(last_atributos)} objetos (frame #{last_frame_id}): {descs}."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
+                        )
                     }
                 if target:
                     return {
-                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')} (frame #{last_frame_id})."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')}."  # noqa: E501
+                        )
                     }
     except Exception:
         pass
@@ -299,14 +423,8 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     k in low2
                     for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
                 ):  # noqa: E501
-                    try:
-                        from plataforma.webcam.backend.ws import (
-                            last_frame_id as _fid,  # noqa: E501
-                        )
-                    except Exception:
-                        _fid = 0
                     return {
-                        "text": f"Buscando {', '.join(prompts)} (YOLO-World dinámico, frame #{_fid})."  # noqa: E501
+                        "text": strip_grounding_leak(f"Buscando {', '.join(prompts)}.")
                     }
     except Exception:
         pass
@@ -331,13 +449,70 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
     has_hf = bool(os.getenv("HF_TOKEN", "").strip())
 
-    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock) — grounded
+    # 0) Ollama local PRIMARIO (gratis/offline; docs 020-ollama-fallback).
+    #    Env: OLLAMA_BASE_URL (default 127.0.0.1:11434/v1),
+    #    OLLAMA_MODEL (default qwen2.5:1.5b). Default IPv4 explícita:
+    #    `localhost` puede resolver a ::1 donde Docker Desktop hace relay
+    #    a OTRO Ollama sin nuestros modelos. Si el daemon no está,
+    #    falla rápido (connect) y sigue la cadena hospedada.
+    ollama_base = (
+        os.getenv("OLLAMA_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
+    )
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip() or "qwen2.5:1.5b"
+    # Conversación fluida: memoria multi-turno + system conciso es-AR.
+    # Sin historial el contrato viejo (solo prompt) sigue idéntico.
+    _system = (
+        "Sos un asistente de voz en español rioplatense. "
+        "Respondé corto (1-2 frases, máximo 60 palabras), "
+        "conversacional, sin listas ni tecnicismos. "
+        "Si hay percepción viva entre corchetes, usala; si no, no inventes objetos."
+    )
+    _hist: list[dict[str, str]] = []
+    try:
+        for t in req.historial or []:
+            r = (t.role or "").strip().lower()
+            c = (t.content or "").strip()
+            if r not in ("user", "assistant") or not c:
+                continue
+            _hist.append({"role": r, "content": c[:500]})
+        _hist = _hist[-6:]
+    except Exception:
+        _hist = []
+    _messages: list[dict[str, str]] = [{"role": "system", "content": _system}]
+    _messages.extend(_hist)
+    _messages.append({"role": "user", "content": prompt_grounded})
+    try:
+        from openai import OpenAI
+
+        _ollama = OpenAI(api_key="ollama", base_url=ollama_base)
+        _resp = _ollama.chat.completions.create(
+            model=ollama_model,
+            messages=_messages,  # type: ignore[arg-type]
+            timeout=15,
+            temperature=0.6,
+            max_tokens=150,
+            extra_body={
+                "options": {
+                    "temperature": 0.6,
+                    "num_predict": 120,
+                    "num_ctx": 2048,
+                },
+                "keep_alive": "5m",
+            },
+        )
+        _txt = (_resp.choices[0].message.content or "").strip()
+        if _txt:
+            return {"text": strip_grounding_leak(_txt)}
+    except Exception as e:
+        logger.warning("Ollama fallo: %s", e)
+
+    # 1) Groq secundario (antes primario Ticket 021) — grounded
     if has_groq:
         try:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
-                return {"text": text}
+                return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Groq fallo: %s", e)
 
@@ -357,7 +532,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     prompt_grounded, modelo="meta-llama/Llama-3.2-3B-Instruct"
                 )
                 if text.strip():
-                    return {"text": text}
+                    return {"text": strip_grounding_leak(text)}
             finally:
                 if orig_base:
                     os.environ["OPENAI_BASE_URL"] = orig_base
@@ -374,7 +549,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 or gemini_client.MODELO_GEMINI_LEGACY
             )
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
-            return {"text": text}
+            return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Gemini fallo: %s", e)
 
@@ -396,49 +571,34 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             )
             txt = (resp.choices[0].message.content or "").strip()
             if txt:
-                return {"text": txt}
+                return {"text": strip_grounding_leak(txt)}
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
 
-    # 3) Mock final segun patrones — grounded (usa prefix si hay percepción)
-    low = prompt_grounded.lower()
-    if "hola" in low:
-        # si hay percepción, responder grounded
-        if grounded_prefix and "person" in grounded_prefix.lower():
-            return {
-                "text": f"¡Hola! Veo {grounded_prefix.split('Percepción viva')[1][:120] if 'Percepción viva' in grounded_prefix else 'person'} (mock grounded)."  # noqa: E501
-            }
+    # Mock final (mapa #130 G3): silencio total — el mock nunca afirma visión
+    # ni devuelve el prefijo (era el leak de la captura). Las respuestas
+    # deterministas con visión fresca ya salieron por atajos S3 arriba.
+    # Excepción: saludo — no afirma visión, así que responde determinista
+    # en vez de callar (conversación fluida sin cámara ni keys).
+    if es_saludo:
         return {
-            "text": (
-                "¡Hola! Soy Muse Spark 1.2 free vía OpenAI (fallback). "
-                "¿Como te registro por camara? Mirá y hacé pulgar arriba."
-            )
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
         }
-    if "registr" in low:
-        return {
-            "text": (
-                "Perfecto, para registrarte mirá a la camara y "
-                "hacé pulgar arriba. (fallback OpenAI)"
-            )
-        }
-    if "quien" in low:
-        return {
-            "text": (
-                "Soy Muse Spark 1.2, orquestador cognitivo de Embodied AI. "
-                "(fallback OpenAI)"
-            )
-        }
-    # fallback grounded: si había percepción, devolverla; sino genérico
-    if grounded_prefix:
-        return {
-            "text": f'{grounded_prefix} Recibí: "{prompt}" (mock grounded — sin LLM).'
-        }
-    return {
-        "text": (
-            f'Recibio: "{prompt}" (fallback OpenAI — '
-            "Gemini y OpenAI no disponibles por el momento)."
+    # Fragmento/pregunta no clasificada CON visión fresca: describir lo que
+    # se ve en vez de callar (el STT continuo suele entregar fragmentos como
+    # "qué" de "qué ves"). G3 intacto: solo afirma datos frescos reales.
+    if snapshot is not None and last_atributos:
+        _n = len(last_atributos)
+        _descs = ", ".join(
+            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"
+            for a in last_atributos[:4]
         )
-    }
+        return {
+            "text": strip_grounding_leak(
+                f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}."
+            )
+        }
+    return {"text": ""}
 
 
 class VisionCaptionRequest(BaseModel):

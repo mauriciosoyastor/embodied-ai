@@ -12,5 +12,6 @@ Cada archivo `NNNN-*.md` es una lección. `AGENTS.md` apunta a las que bloquean 
 | 0004 | `0004-gitignore-artefactos-agentes.md` | untracked `node_modules`/`dist`/`trajectory` |
 | 0005 | `0005-mypy-overrides-temporales.md` | override mypy que sobrevivió al módulo real |
 | 0006 | `0006-reuse-selectivo.md` | `pip install` repo <12/12 ingeniería trae `dlib`/`Postgres` y rompe `uv.lock` |
+| 0007 | `0007-golden-path-no-autoejecuta-skills.md` | `pytest` golden path no dispara skills / usar `/golden-path` |
 
 Al escribir una lección nueva: síntoma → causa → regla positiva → check antes de push → ejemplo incorrecto/correcto.

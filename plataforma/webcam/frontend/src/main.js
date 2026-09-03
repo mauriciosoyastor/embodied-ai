@@ -96,7 +96,7 @@ function createPercepcionDOM() {
       <button id="p-mock">Mock boxes</button>
       <button id="p-reset" title="POST /fsm/reset libera ABORTED→IDLE">Reset FSM</button>
     </div>
-    <div class="percepcion-hint">pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED · WS <code>ws://localhost:8000/ws/percepcion</code> (buffer 64KB · 10 FPS · reconexión exponencial)</div>
+    <div class="percepcion-hint">pulgar arriba → RUNNING · palma abierta → PAUSED · puño → ABORTED · WS <code>ws://localhost:8000/ws/percepcion</code> (buffer 64KB · 2 FPS adaptivo CPU · reconexión exponencial)</div>
   `;
   return panel;
 }
@@ -141,19 +141,40 @@ function initPercepcion() {
         } catch {}
       }
       // Intenta backend voz si existe (ticket 004), fallback mock ya en voice-chat.js
+      // Timeout 12s: sin esto un backend colgado deja el chat en "thinking" para siempre.
+      // Historial fluido: últimos 6 turnos locales → backend arma messages multi-turno.
+      let ctl = null;
+      let timer = null;
       try {
+        ctl = new AbortController();
+        timer = setTimeout(() => { try { ctl.abort(); } catch {} }, 12000);
+        let historial = [];
+        try {
+          const all = typeof voice.getTranscripts === 'function' ? voice.getTranscripts() : [];
+          historial = all.slice(-6).map((t) => ({
+            role: t.role === 'bot' ? 'assistant' : 'user',
+            content: String(t.text || '').slice(0, 500),
+          }));
+        } catch {}
         const r = await fetch("http://localhost:8000/voz", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: text }),
+          body: JSON.stringify({ prompt: text, historial }),
+          signal: ctl.signal,
         });
         if (r.ok) {
           const j = await r.json();
           if (j && j.text) return j.text;
           if (j && j.reply) return j.reply;
+          // /voz 200 con texto vacío = gate G1/G3: sin percepción fresca (<200ms).
+          // Sentinel para que voice-chat avise "iniciá la cámara" en vez de mock genérico.
+          return "__SIN_CAMARA__";
         }
       } catch {}
-      return null;
+      finally {
+        if (timer) clearTimeout(timer);
+      }
+      return "__SIN_BACKEND__";
     },
   });
   percepcion.appendChild(voice.element);
@@ -415,8 +436,9 @@ function initPercepcion() {
       webcam.raf = requestAnimationFrame(loop);
       if (!wsClient || !video.videoWidth) return;
       const now = performance.now();
-      // throttled via wsClient.canSend (10 FPS + bufferedAmount)
-      if (now - lastSend < 100) return; // ~10 FPS cap adicional
+      // 2 FPS adaptivo: el backend en CPU tarda ~800ms/infer (ver /metrics);
+      // a 10Hz solo se generan drops LeakyQueue N=1 (1686) y detecciones viejas.
+      if (now - lastSend < 500) return; // ~2 FPS
       if (!wsClient.canSend()) return;
       // dibujar frame actual en canvas oculto para JPEG
       const ctx = cam.getContext("2d");
@@ -444,6 +466,15 @@ function initPercepcion() {
     });
   }
   startBtn.addEventListener("click", startCamera);
+  // T2: cuando la voz pide cámara (backend sin percepción fresca), resaltar
+  // el botón 3s para guiar la acción en vez de solo texto.
+  window.addEventListener("voz:sin-camara", () => {
+    try {
+      startBtn.classList.add("need-cam");
+      startBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      setTimeout(() => startBtn.classList.remove("need-cam"), 3000);
+    } catch {}
+  });
   mockBtn.addEventListener("click", () => {
     // mock sin backend: dibuja boxes demo y gesto random + v2 poses/depths/caption
     const demoBoxes = [
