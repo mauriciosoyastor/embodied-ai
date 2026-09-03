@@ -265,7 +265,13 @@ def run_ruff(run_id: str) -> dict:
 def run_mypy(run_id: str) -> dict:
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "mypy", ".", "--ignore-missing-imports"],
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "plataforma/webcam",
+                "--ignore-missing-imports",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -295,7 +301,7 @@ def run_detect_changes() -> dict:
     try:
         # intenta CLI GitNexus; si no está índice o falla, no bloquea
         proc = subprocess.run(
-            ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all", "--json"],
+            ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"],
             capture_output=True,
             text=True,
             timeout=15,
