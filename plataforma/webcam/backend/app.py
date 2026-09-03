@@ -23,9 +23,15 @@ from plataforma.webcam.backend.ws import perception_ws_handler
 logger = logging.getLogger(__name__)
 
 
+class TurnoHistorial(BaseModel):
+    role: str
+    content: str
+
+
 class VozRequest(BaseModel):
     prompt: str
     modelo: str | None = None
+    historial: list[TurnoHistorial] | None = None
 
 
 # Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
@@ -264,7 +270,8 @@ async def fsm_state() -> dict[str, str]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Groq→HF→Gemini→mock, grounded. S3 anclaje AtributoVista.
+    """Proxy voz: Ollama local primero, Groq/HF/Gemini backup, mock final.
+    S3 anclaje AtributoVista.
 
     Grounded harness (mapa #130): todo prompt se encierra con
     Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
@@ -442,7 +449,64 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
     has_hf = bool(os.getenv("HF_TOKEN", "").strip())
 
-    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock) — grounded
+    # 0) Ollama local PRIMARIO (gratis/offline; docs 020-ollama-fallback).
+    #    Env: OLLAMA_BASE_URL (default 127.0.0.1:11434/v1),
+    #    OLLAMA_MODEL (default qwen2.5:1.5b). Default IPv4 explícita:
+    #    `localhost` puede resolver a ::1 donde Docker Desktop hace relay
+    #    a OTRO Ollama sin nuestros modelos. Si el daemon no está,
+    #    falla rápido (connect) y sigue la cadena hospedada.
+    ollama_base = (
+        os.getenv("OLLAMA_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
+    )
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip() or "qwen2.5:1.5b"
+    # Conversación fluida: memoria multi-turno + system conciso es-AR.
+    # Sin historial el contrato viejo (solo prompt) sigue idéntico.
+    _system = (
+        "Sos un asistente de voz en español rioplatense. "
+        "Respondé corto (1-2 frases, máximo 60 palabras), "
+        "conversacional, sin listas ni tecnicismos. "
+        "Si hay percepción viva entre corchetes, usala; si no, no inventes objetos."
+    )
+    _hist: list[dict[str, str]] = []
+    try:
+        for t in req.historial or []:
+            r = (t.role or "").strip().lower()
+            c = (t.content or "").strip()
+            if r not in ("user", "assistant") or not c:
+                continue
+            _hist.append({"role": r, "content": c[:500]})
+        _hist = _hist[-6:]
+    except Exception:
+        _hist = []
+    _messages: list[dict[str, str]] = [{"role": "system", "content": _system}]
+    _messages.extend(_hist)
+    _messages.append({"role": "user", "content": prompt_grounded})
+    try:
+        from openai import OpenAI
+
+        _ollama = OpenAI(api_key="ollama", base_url=ollama_base)
+        _resp = _ollama.chat.completions.create(
+            model=ollama_model,
+            messages=_messages,  # type: ignore[arg-type]
+            timeout=15,
+            temperature=0.6,
+            max_tokens=150,
+            extra_body={
+                "options": {
+                    "temperature": 0.6,
+                    "num_predict": 120,
+                    "num_ctx": 2048,
+                },
+                "keep_alive": "5m",
+            },
+        )
+        _txt = (_resp.choices[0].message.content or "").strip()
+        if _txt:
+            return {"text": strip_grounding_leak(_txt)}
+    except Exception as e:
+        logger.warning("Ollama fallo: %s", e)
+
+    # 1) Groq secundario (antes primario Ticket 021) — grounded
     if has_groq:
         try:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO

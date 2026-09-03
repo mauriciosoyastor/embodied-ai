@@ -104,9 +104,18 @@ def _taza() -> dict[str, Any]:
     }
 
 
-def _preguntar(prompt: str) -> dict[str, str]:
+def _preguntar(
+    prompt: str, historial: list[dict[str, str]] | None = None
+) -> dict[str, str]:
     async def _inner() -> dict[str, str]:
-        return await VozHandler(VozRequest(prompt=prompt))
+        from plataforma.webcam.backend.app import TurnoHistorial
+
+        turns = (
+            [TurnoHistorial(role=t["role"], content=t["content"]) for t in historial]
+            if historial
+            else None
+        )
+        return await VozHandler(VozRequest(prompt=prompt, historial=turns))
 
     return asyncio.run(_inner())
 
@@ -236,6 +245,128 @@ def test_sin_vision_y_sin_clasificar_calla(monkeypatch: pytest.MonkeyPatch) -> N
     _sin_red(monkeypatch)
     _fijar_percepcion(monkeypatch, _atributos(), 5000)
     assert _preguntar("contame algo") == {"text": ""}
+
+
+def test_ollama_primario_responde(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Rama 0 Ollama con cliente stub exitoso: responde LLM real-like con
+    # grounding (prefijo inyectado pero sanitizado en salida).
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+
+    class _Msg:
+        content = "Hola, veo que hay una persona."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar("contame algo interesante")["text"]
+    assert "persona" in text
+    _sin_veto(text)
+
+
+def test_historial_multiturno_llega_a_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Conversación fluida: system + historial + user van en messages.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    capturado: dict[str, Any] = {}
+
+    class _Msg:
+        content = "Claro, era roja."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            capturado.update(k)
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar(
+        "¿y su color?",
+        historial=[
+            {"role": "user", "content": "¿qué ves?"},
+            {"role": "assistant", "content": "Veo una taza."},
+        ],
+    )["text"]
+    assert "roja" in text.lower() or "claro" in text.lower()
+    msgs = capturado.get("messages", [])
+    assert msgs[0]["role"] == "system"
+    assert any(m["content"] == "Veo una taza." for m in msgs)
+    assert msgs[-1]["role"] == "user"
+    assert capturado.get("timeout") == 15
+    _sin_veto(text)
+
+
+def test_sin_historial_compat_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Contrato viejo prompt-only: system + user, sin turnos intermedios.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    capturado: dict[str, Any] = {}
+
+    class _Msg:
+        content = "Hola."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            capturado.update(k)
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    assert _preguntar("contame algo")["text"] == "Hola."
+    msgs = capturado.get("messages", [])
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "system"
 
 
 def test_strip_legitimo_intacto() -> None:
