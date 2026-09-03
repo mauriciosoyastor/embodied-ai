@@ -466,6 +466,15 @@ function initPercepcion() {
     });
   }
   startBtn.addEventListener("click", startCamera);
+  // T2: cuando la voz pide cámara (backend sin percepción fresca), resaltar
+  // el botón 3s para guiar la acción en vez de solo texto.
+  window.addEventListener("voz:sin-camara", () => {
+    try {
+      startBtn.classList.add("need-cam");
+      startBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      setTimeout(() => startBtn.classList.remove("need-cam"), 3000);
+    } catch {}
+  });
   mockBtn.addEventListener("click", () => {
     // mock sin backend: dibuja boxes demo y gesto random + v2 poses/depths/caption
     const demoBoxes = [

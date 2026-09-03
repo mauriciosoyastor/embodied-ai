@@ -247,6 +247,15 @@ def test_sin_vision_y_sin_clasificar_calla(monkeypatch: pytest.MonkeyPatch) -> N
     assert _preguntar("contame algo") == {"text": ""}
 
 
+def test_fragmento_ahora_stale_calla(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fragmento STT de 1 palabra ("ahora." de la captura) sin visión fresca:
+    # silencio backend; el frontend pide cámara vía __SIN_CAMARA__.
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    assert _preguntar("ahora.") == {"text": ""}
+
+
 def test_ollama_primario_responde(monkeypatch: pytest.MonkeyPatch) -> None:
     # Rama 0 Ollama con cliente stub exitoso: responde LLM real-like con
     # grounding (prefijo inyectado pero sanitizado en salida).
