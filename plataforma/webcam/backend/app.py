@@ -29,8 +29,64 @@ class VozRequest(BaseModel):
 
 
 # Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
-FRESH_ATRIBUTOS_MS = 200
+# 2000ms en vez de 200ms: con inferencia CPU ~800ms/frame + envío 2Hz toda
+# percepción "fresca" real llega con ~700-1000ms de edad; 200ms solo servía
+# con GPU. Para conversar, una foto de hace 1s sigue siendo válida.
+FRESH_ATRIBUTOS_MS = 2000
 FRESH_Z_MS = 500
+
+# Saludo/smalltalk que NO afirma nada visual: no requiere percepción fresca.
+_SALUDO_KEYWORDS = (
+    "hola",
+    "buenas",
+    "cómo estás",
+    "como estas",
+    "qué tal",
+    "que tal",
+    "quién sos",
+    "quien sos",
+    "cómo te llam",
+    "como te llam",
+    "gracias",
+    "chau",
+    "adiós",
+    "adios",
+    "buen día",
+    "buenas tardes",
+    "buenas noches",
+)
+# Si el prompt trae alguna de estas, es pregunta visual aunque empiece con hola.
+_VISION_KEYWORDS = (
+    "color",
+    "tamaño",
+    "tamano",
+    "qué ves",
+    "que ves",
+    "qué hay",
+    "que hay",
+    "izquierda",
+    "derecha",
+    "distancia",
+    "cerca",
+    "lejos",
+    "mira",
+    "mirá",
+    "busca",
+    "buscá",
+    "dónde",
+    "donde",
+    "taza",
+    "cup",
+    "tv",
+)
+
+
+def _es_saludo(prompt: str) -> bool:
+    """True si es smalltalk sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _SALUDO_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
 
 
 def _fresh_snapshot(
@@ -208,7 +264,7 @@ async def fsm_state() -> dict[str, str]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
+    """Proxy voz: Groq→HF→Gemini→mock, grounded. S3 anclaje AtributoVista.
 
     Grounded harness (mapa #130): todo prompt se encierra con
     Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
@@ -217,31 +273,39 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     if not prompt:
         return {"text": ""}
 
-    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma nada.
+    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
+    # Excepción: saludo/smalltalk (no afirma visión) pasa sin cámara.
+    es_saludo = _es_saludo(prompt)
     snapshot = _fresh_snapshot()
-    if snapshot is None:
+    if snapshot is None and not es_saludo:
         return {"text": ""}
-    last_atributos, last_frame_id, _age = snapshot
+    if snapshot is None:
+        last_atributos: list[dict[str, Any]] = []
+        last_frame_id, _age = 0, 0
+    else:
+        last_atributos, last_frame_id, _age = snapshot
 
-    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt.
-    # Este prefijo alimenta LLMs pero NUNCA sale en `text` (ver T1 checklist).
-    _descs = ", ".join(
-        [
-            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
-            f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
-            f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
-            for a in last_atributos[:4]
-        ]
-    )
-    grounded_prefix = (
-        f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
-        f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
-        f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
-    )
-    # prompt efectivo para LLM
-    prompt_grounded = (
-        f"{grounded_prefix}Usuario dice: {prompt}" if grounded_prefix else prompt
-    )
+    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
+    # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para
+    # que el LLM no invente objetos: un saludo no necesita grounding.
+    if snapshot is None:
+        prompt_grounded = prompt
+    else:
+        _descs = ", ".join(
+            [
+                f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+                f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+                for a in last_atributos[:4]
+            ]
+        )
+        grounded_prefix = (
+            f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+            f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+            f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+        )
+        # prompt efectivo para LLM
+        prompt_grounded = f"{grounded_prefix}Usuario dice: {prompt}"
     # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
     try:
         low_q = prompt.lower()
@@ -450,6 +514,26 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # Mock final (mapa #130 G3): silencio total — el mock nunca afirma visión
     # ni devuelve el prefijo (era el leak de la captura). Las respuestas
     # deterministas con visión fresca ya salieron por atajos S3 arriba.
+    # Excepción: saludo — no afirma visión, así que responde determinista
+    # en vez de callar (conversación fluida sin cámara ni keys).
+    if es_saludo:
+        return {
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        }
+    # Fragmento/pregunta no clasificada CON visión fresca: describir lo que
+    # se ve en vez de callar (el STT continuo suele entregar fragmentos como
+    # "qué" de "qué ves"). G3 intacto: solo afirma datos frescos reales.
+    if snapshot is not None and last_atributos:
+        _n = len(last_atributos)
+        _descs = ", ".join(
+            f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"
+            for a in last_atributos[:4]
+        )
+        return {
+            "text": strip_grounding_leak(
+                f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}."
+            )
+        }
     return {"text": ""}
 
 
