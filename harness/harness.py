@@ -112,6 +112,7 @@ class TrajectoryEntry:
     evidence: EvidenceBundle = field(default_factory=EvidenceBundle)
     human_gate: HumanGate = field(default_factory=lambda: HumanGate(needed=False))
     sensor_log: str = ""
+    removed_tools: list[str] = field(default_factory=list)
 
 
 # ── Permisos ─────────────────────────────────────────────────────────────

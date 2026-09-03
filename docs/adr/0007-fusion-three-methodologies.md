@@ -18,3 +18,8 @@ Fusión eficaz de **(1) Skills Matt Pocock** (`wayfinder/triage/to-tickets/tdd/c
 - **Caso contaminación**: `ws.py:197` citado como anti-pattern; `CONTEXT.md:131` Whitelist W30 pierde números de línea a futuro via linter; histéresis `N=5` y `ReID N=3` permanecen como conceptos, no como anclas `ws.py:204`.
 - **Reversibilidad**: bajo costo (5min) `pdg:true`, `ci.yml` uv; alto costo (semi-irreversible) `triage-labels.md`, `CONTEXT.md` single-context — cambiar labels requiere migración de issues.
 - **Downstream**: tickets #123-#128 desbloqueados; `harness/context_injector.py` y `impact_ratio` quedan para prototipos; `pre-commit` `ruff+mypy+pytest` es gate P0, GitNexus gate es P1 en Harness.
+
+**Purga Golden Path puro (2026-09-03, spec draft local):**
+- **Removed tools**: `harness/prototype-context-injector.py`, `harness/prototype-harness-detect.html`, `prototype-memoria-objetos.html`, `plataforma/webcam/frontend/prototype-imgsz-small.html`, `plataforma/webcam/frontend/prototype-leaky-reid.html`, `.scratch/*` (graph.html, pr_body.md, plegado-productivo, correcciones-percepcion-v2), `out.txt`, `.github/workflows/agent-implement.yml.disabled`, logs `*.err/*.log`. Archivados vía git history (reversible).
+- **Conservado**: `ci.yml` + `agent-review.yml` únicos, `.gitnexusrc pdg:true`, `domain.md`/`triage-labels.md`/`issue-tracker.md`, `CONTEXT.md` linter OK, `harness P-E-V` con `TrajectoryEntry.removed_tools: list[str]` para auditoría.
+- **Verificación**: `uv run ruff check .` OK, `ruff format --check .` OK, `mypy plataforma/webcam` OK, `pytest` OK, `harness/check_context.py` OK, `tests/test_golden_path_puro.py` 5/5 en seam único.
