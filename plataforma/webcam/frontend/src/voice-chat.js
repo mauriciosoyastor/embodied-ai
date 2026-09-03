@@ -14,7 +14,7 @@ export function normalizeTranscriptForWorld(text) {
 
 export function shouldSendTranscript(text) {
   const t = (text || '').trim();
-  if (t.length < 3) return false;
+  if (t.length < 2) return false;
   return true;
 }
 
@@ -25,8 +25,11 @@ export function shouldSendTranscript(text) {
 export function isLowInfoInterim(text) {
   const t = (text || '').trim();
   if (!t) return true;
-  if (t.length < 8) return true;
-  if (t.split(/\s+/).filter(Boolean).length < 2) return true;
+  // Solo descartar fragmentos de 1 palabra muy corta ("qué", "ah").
+  // "taza", "persona", "sí hay" ya son turnos válidos (backend describe
+  // escena fresca ante fragmentos, test_fragmento_stt_describe_escena).
+  if (t.length < 4) return true;
+  if (t.split(/\s+/).filter(Boolean).length < 1) return true;
   return false;
 }
 
@@ -170,6 +173,13 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
 
   function speak(text) {
     lastBotText = String(text || '');
+    // Texto vacío (backend silenció G3 sin sentinel): no pasar por TTS —
+    // reabrir el mic de inmediato para no dejar la charla 3s en "speaking".
+    if (!String(text || '').trim()) {
+      resumeRecogAfterReply();
+      if (!active) setState('idle');
+      return;
+    }
     if (!('speechSynthesis' in window) || muted) {
       // Sin TTS igual hay que reabrir el mic para seguir conversando
       resumeRecogAfterReply();
