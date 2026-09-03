@@ -422,3 +422,18 @@ def test_eco_llm_sanitizado(monkeypatch: pytest.MonkeyPatch) -> None:
     text = _preguntar("contame algo interesante")["text"]
     _sin_veto(text)
     assert "Veo una persona" in text
+
+
+def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "hola + objetos" es visual aunque empiece con saludo: sin frescura calla.
+    from plataforma.webcam.backend.app import _es_saludo
+
+    assert _es_saludo("hola, ¿qué objetos ves?") is False
+    assert _es_saludo("hola, ¿qué ves?") is False
+    assert _es_saludo("hola, ¿cómo estás?") is True
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    assert _preguntar("hola, ¿qué objetos ves?") == {"text": ""}
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    assert _preguntar("objetos")["text"].startswith("Veo")

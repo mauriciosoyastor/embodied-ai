@@ -84,6 +84,15 @@ _VISION_KEYWORDS = (
     "taza",
     "cup",
     "tv",
+    "objeto",
+    "objetos",
+    "ves",
+    "veo",
+    "ven",
+    "hay",
+    "muest",
+    "enseñ",
+    "ensen",
 )
 
 
