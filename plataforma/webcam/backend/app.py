@@ -27,6 +27,32 @@ class VozRequest(BaseModel):
     modelo: str | None = None
 
 
+# Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
+FRESH_ATRIBUTOS_MS = 200
+FRESH_Z_MS = 500
+
+
+def _fresh_snapshot(
+    max_age_ms: int = FRESH_ATRIBUTOS_MS,
+) -> tuple[list[dict[str, Any]], int, int] | None:
+    """Snapshot (atributos, frame_id, age_ms) si la percepción está fresca.
+
+    Lee los globales de `ws` con import diferido (sin ciclo). `None` = stale
+    o ausente: la voz no debe afirmar nada (silencio G3).
+    """
+    try:
+        import time as _t
+
+        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
+
+        age = int(_t.time() * 1000) - int(last_ts or 0)
+        if last_atributos and age <= max_age_ms:
+            return list(last_atributos), int(last_frame_id), age
+    except Exception:
+        pass
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Inicializa detectores lazy — no falla si models ausentes."""
@@ -154,39 +180,34 @@ async def fsm_state() -> dict[str, str]:
 async def VozHandler(req: VozRequest) -> dict[str, str]:
     """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
 
-    Grounded harness (plan.voz-grounded): todo prompt se encierra con
-    Percepción viva last_atributos (≤500ms) para evitar hallucination Walmart.
+    Grounded harness (mapa #130): todo prompt se encierra con
+    Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
     """  # noqa: E501
     prompt = req.prompt.strip()
     if not prompt:
         return {"text": ""}
 
-    # Grounding previo: inyectar Percepción viva a TODO prompt (no solo is_color_q)
-    grounded_prefix = ""
-    try:
-        import time as _t
+    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma nada.
+    snapshot = _fresh_snapshot()
+    if snapshot is None:
+        return {"text": ""}
+    last_atributos, last_frame_id, _age = snapshot
 
-        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
-
-        _age = int(_t.time() * 1000) - int(last_ts or 0)
-        if last_atributos and _age < 2000:
-            _descs = ", ".join(
-                [
-                    f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
-                    f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
-                    f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
-                    for a in last_atributos[:4]
-                ]
-            )
-            grounded_prefix = (
-                f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
-                f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
-                f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
-            )
-        else:
-            grounded_prefix = "[Percepción: No veo objetos ahora (frame stale >2s).] "
-    except Exception:
-        grounded_prefix = ""
+    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt.
+    # Este prefijo alimenta LLMs pero NUNCA sale en `text` (ver T1 checklist).
+    _descs = ", ".join(
+        [
+            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+            f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+            f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+            for a in last_atributos[:4]
+        ]
+    )
+    grounded_prefix = (
+        f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+        f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+        f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+    )
     # prompt efectivo para LLM
     prompt_grounded = (
         f"{grounded_prefix}Usuario dice: {prompt}" if grounded_prefix else prompt
@@ -208,17 +229,9 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             ]
         )
         if is_color_q:
-            import time
-
-            from plataforma.webcam.backend.ws import (
-                last_atributos,
-                last_frame_id,
-                last_ts,
-            )
-
-            now_ms = int(time.time() * 1000)
-            age = now_ms - int(last_ts or 0)
-            if last_atributos and age < 500:
+            # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
+            age = _age
+            if last_atributos:
                 # buscar taza/cup si pregunta específica, sino listar todos
                 target = None
                 if "taza" in low_q or "cup" in low_q:
