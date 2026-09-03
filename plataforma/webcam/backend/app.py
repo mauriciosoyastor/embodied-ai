@@ -151,7 +151,7 @@ async def fsm_state() -> dict[str, str]:
 
 
 @app.post("/voz")
-async def VozHandler(req: VozRequest) -> dict[str, str]:  # type: ignore[no-untyped-def]
+async def VozHandler(req: VozRequest) -> dict[str, str]:
     """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista.
 
     Grounded harness (plan.voz-grounded): todo prompt se encierra con

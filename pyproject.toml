@@ -41,8 +41,8 @@ module = ["numpy.*", "cv2.*", "fastapi.*", "onnxruntime.*", "mediapipe.*", "PIL.
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["harness.*", "harness.harness"]
-ignore_errors = true
+module = ["harness.*"]
+ignore_missing_imports = true
 
 [dependency-groups]
 dev = ["ruff", "mypy", "pytest"]

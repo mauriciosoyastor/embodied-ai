@@ -304,9 +304,9 @@ def run_detect_changes() -> dict:
             errors="replace",
         )
         out = (proc.stdout or "") + (proc.stderr or "")
-        # heurística simple: si out contiene HIGH/UNKNOWN
-        high = "HIGH" in out or "high" in out.lower() and "risk" in out.lower()
-        unknown = "UNKNOWN" in out or "unknown" in out.lower()
+        # heurística simple: si out contiene HIGH/UNKNOWN (paréntesis explícitos para precedencia)
+        high = ("HIGH" in out) or ("high" in out.lower() and "risk" in out.lower())
+        unknown = ("UNKNOWN" in out) or ("unknown" in out.lower())
         # intenta parsear impacted_nodes si JSON
         impacted = 0
         changed = 0
