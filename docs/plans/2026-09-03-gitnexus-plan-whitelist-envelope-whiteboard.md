@@ -6,7 +6,7 @@
 
 ## 1. Objective
 
-Entregar fundación vertical (tracer-bullet) que filtra YOLO 80 → W30 33 clases curadas (`CONTEXT.md:133` mismo yolo11n.onnx +105% cobertura), transporta por único WebSocket `/ws/percepcion` con `seq/ts` correlacionado `frame_id`, y expone `WhiteboardState.percepcion_vista` con TTL por campo y guarda `ABORTED overlay-only`, sin romper `Glass-to-Glass <200ms` ni `LeakyQueue N=1`. Incluye voz grounded `[Percepción viva frame #]` ya en HEAD `app.py:156`.
+Entregar fundación vertical (tracer-bullet) que filtra YOLO 80 → W30 33 clases curadas (término `Whitelist W30`, detalle en ADR-0013; mismo yolo11n.onnx +105% cobertura), transporta por único WebSocket `/ws/percepcion` con `seq/ts` correlacionado `frame_id`, y expone `WhiteboardState.percepcion_vista` con TTL por campo y guarda `ABORTED overlay-only`, sin romper `Glass-to-Glass <200ms` ni `LeakyQueue N=1`. Incluye voz grounded `[Percepción viva frame #]` ya en HEAD `app.py:156`.
 
 ## 2. Current Behaviour
 
@@ -14,7 +14,7 @@ Entregar fundación vertical (tracer-bullet) que filtra YOLO 80 → W30 33 clase
 
 ## 3. Relevant Architecture
 
-Monorepo `plataforma/webcam/backend` (uv workspace) + `frontend` desacoplados por `Envelope` y `WhiteboardState` (single-writer memoria, sin transcript `CONTEXT.md:16`). ONNX `intra_op_num_threads=2` por modelo evita jitter `research 072/073` p95 +10-15ms. `AsyncLeakyQueue N=1` fast 10Hz + slow 5Hz piggyback comparten `seq`.
+Monorepo `plataforma/webcam/backend` (uv workspace) + `frontend` desacoplados por `Envelope` y `WhiteboardState` (single-writer memoria, sin transcript; término `Whiteboard`, glosario). ONNX `intra_op_num_threads=2` por modelo evita jitter `research 072/073` p95 +10-15ms. `AsyncLeakyQueue N=1` fast 10Hz + slow 5Hz piggyback comparten `seq`.
 
 ## 4. GitNexus Findings (source-derived fallback)
 
