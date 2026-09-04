@@ -27,3 +27,9 @@ repos:
         language: system
         files: ^plataforma/
         pass_filenames: false
+      - id: citas-existen
+        name: citas a docs/tests/harness existen
+        entry: python .github/scripts/check-citas-existen.py
+        language: system
+        files: '^(\.opencode/commands/.*\.md|docs/guides/golden-portable\.md)$'
+        pass_filenames: false
