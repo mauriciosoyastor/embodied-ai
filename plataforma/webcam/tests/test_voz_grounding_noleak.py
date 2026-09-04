@@ -486,7 +486,7 @@ def test_eco_llm_sanitizado(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None:
     # "hola + objetos" es visual aunque empiece con saludo: sin frescura calla.
-    from plataforma.webcam.backend.app import _es_saludo
+    from plataforma.webcam.backend.intent_router import _es_saludo
 
     assert _es_saludo("hola, ¿qué objetos ves?") is False
     assert _es_saludo("hola, ¿qué ves?") is False
@@ -502,7 +502,7 @@ def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None
 def test_ack_charla_no_repite_no_veo(monkeypatch: pytest.MonkeyPatch) -> None:
     # "perfecto" es charla (no afirma visión): jamás silencio G3,
     # con o sin percepción fresca. Fija el "repite lo mismo".
-    from plataforma.webcam.backend.app import _es_charla
+    from plataforma.webcam.backend.intent_router import _es_charla
 
     assert _es_charla("perfecto") is True
     assert _es_charla("perfecto, ¿qué ves?") is False
@@ -556,7 +556,7 @@ def test_ack_charla_no_pasa_por_llm(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pregunta_visual_incluye_personas() -> None:
-    from plataforma.webcam.backend.app import _es_pregunta_visual
+    from plataforma.webcam.backend.intent_router import _es_pregunta_visual
 
     assert _es_pregunta_visual("¿quién hay en cámara?") is True
     assert _es_pregunta_visual("¿hay alguien ahí?") is True

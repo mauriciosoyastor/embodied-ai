@@ -17,6 +17,12 @@ from pydantic import BaseModel
 from plataforma.webcam.backend.identities import store
 from plataforma.webcam.backend.inference.gesture import get_gesture_recognizer
 from plataforma.webcam.backend.inference.yolo import get_yolo_detector
+from plataforma.webcam.backend.intent_router import (
+    _es_charla,
+    _es_meta_modelo,
+    _es_pregunta_visual,
+    _es_saludo,
+)
 from plataforma.webcam.backend.metrics import render_prometheus
 from plataforma.webcam.backend.ws import perception_ws_handler
 
@@ -41,118 +47,9 @@ class VozRequest(BaseModel):
 FRESH_ATRIBUTOS_MS = 2000
 FRESH_Z_MS = 500
 
-# Saludo/smalltalk que NO afirma nada visual: no requiere percepción fresca.
-_SALUDO_KEYWORDS = (
-    "hola",
-    "buenas",
-    "cómo estás",
-    "como estas",
-    "qué tal",
-    "que tal",
-    "quién sos",
-    "quien sos",
-    "cómo te llam",
-    "como te llam",
-    "gracias",
-    "chau",
-    "adiós",
-    "adios",
-    "buen día",
-    "buenas tardes",
-    "buenas noches",
-)
-# Si el prompt trae alguna de estas, es pregunta visual aunque empiece con hola.
-_VISION_KEYWORDS = (
-    "color",
-    "tamaño",
-    "tamano",
-    "qué ves",
-    "que ves",
-    "qué hay",
-    "que hay",
-    "izquierda",
-    "derecha",
-    "distancia",
-    "cerca",
-    "lejos",
-    "mira",
-    "mirá",
-    "busca",
-    "buscá",
-    "dónde",
-    "donde",
-    "taza",
-    "cup",
-    "tv",
-    "objeto",
-    "objetos",
-    "ves",
-    "veo",
-    "ven",
-    "hay",
-    "muest",
-    "enseñ",
-    "ensen",
-)
-
-
-def _es_saludo(prompt: str) -> bool:
-    """True si es smalltalk sin afirmación visual (no necesita cámara)."""
-    low = prompt.lower()
-    if not any(k in low for k in _SALUDO_KEYWORDS):
-        return False
-    return not any(k in low for k in _VISION_KEYWORDS)
-
-
-# Acuse conversacional que NO afirma nada visual (perfecto, genial, dale):
-# como el saludo, pasa sin cámara para no repetir "No veo objetos".
-_CHARLA_KEYWORDS = (
-    "perfecto",
-    "genial",
-    "buenísimo",
-    "buenisimo",
-    "excelente",
-    "bárbaro",
-    "barbaro",
-    "entendido",
-    "de nada",
-    "dale",
-    "jaja",
-)
-
-
-def _es_charla(prompt: str) -> bool:
-    """True si es acuse sin afirmación visual (no necesita cámara)."""
-    low = prompt.lower()
-    if not any(k in low for k in _CHARLA_KEYWORDS):
-        return False
-    return not any(k in low for k in _VISION_KEYWORDS)
-
-
-# Pregunta que SÍ afirma visión (requiere percepción fresca; sin ella G3 calla).
-# Incluye personas: "¿quién hay?", "¿ves a alguien?", "¿hay gente?".
-_PERSONA_KEYWORDS = (
-    "persona",
-    "personas",
-    "alguien",
-    "gente",
-    "quién hay",
-    "quien hay",
-    "quién está",
-    "quien esta",
-    "ves a",
-    "se ve",
-    "cuánt",
-    "cuant",
-)
-
-
-def _es_pregunta_visual(prompt: str) -> bool:
-    """True si el prompt pide visión (objetos o personas)."""
-    low = prompt.lower()
-    if any(k in low for k in _VISION_KEYWORDS):
-        return True
-    return any(k in low for k in _PERSONA_KEYWORDS)
+# Intenciones voz (fast-path determinista): viven en intent_router.py con
+# regex precompiladas (importadas arriba; re-export por compatibilidad).
+__all__ = ["_es_charla", "_es_meta_modelo", "_es_pregunta_visual", "_es_saludo"]
 
 
 # Clases COCO → es-AR para respuestas habladas (el detector habla inglés).
