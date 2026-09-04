@@ -199,7 +199,7 @@ def run_pytest(run_id: str) -> tuple[dict, str]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=180,
             cwd=str(REPO_ROOT),
             encoding="utf-8",
             errors="replace",

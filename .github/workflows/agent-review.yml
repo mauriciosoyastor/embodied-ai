@@ -116,7 +116,7 @@ jobs:
           jq -n --arg b "$body" '{event:"APPROVE", body:$b}' \
             | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
 
-      - name: Pedir cambios (iter < 3) y re-disparar coder
+      - name: Pedir cambios (iter < 3)
         if: steps.review.outputs.verdict == 'request_changes' && fromJSON(steps.review.outputs.iteration) < 3
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -125,7 +125,6 @@ jobs:
           ITERATION: ${{ steps.review.outputs.iteration }}
           SUMMARY: ${{ steps.review.outputs.summary }}
         run: |
-          next=$((ITERATION + 1))
           body=$(cat <<'EOF'
           ## Agent Review: cambios solicitados
 
@@ -134,14 +133,8 @@ jobs:
           )
           jq -n --arg b "$body" '{event:"REQUEST_CHANGES", body:$b}' \
             | gh api -X POST "repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/reviews" --input -
-          if gh workflow view agent-implement.yml --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            GH_TOKEN="${{ github.token }}" gh workflow run agent-implement.yml \
-              -f issue_number="$ISSUE_NUMBER" \
-              -f pull_number="$PULL_NUMBER" \
-              -f iteration="$next" || echo "::warning:: dispatch agent-implement falló (ignorado)"
-          else
-            echo "::warning:: agent-implement.yml no existe o está deshabilitado (.disabled) — skipping dispatch"
-          fi
+          # Nota: el re-disparo del coder vive en el pipeline AFK externo;
+          # no se referencia ningún workflow implementador purgado (ver purga ADR-0007).
 
       - name: Agotar loop → needs-human-attention
         if: steps.review.outputs.verdict == 'request_changes' && fromJSON(steps.review.outputs.iteration) >= 3

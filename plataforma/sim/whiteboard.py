@@ -25,7 +25,7 @@ except ImportError:
 
 
 class GestoReconocido(BaseModel):
-    """Evento dominio espejo CONTEXT.md:56 — label N=5 histéresis fuera."""
+    """Evento de dominio (ver glosario) — label N=5 histéresis fuera."""
 
     label: Literal["open_palm", "fist", "thumbs_up", "none"] = Field(
         description="gesto"

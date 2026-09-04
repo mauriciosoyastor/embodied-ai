@@ -9,7 +9,7 @@ description = "Roadmap de aprendizaje en Embodied AI / AIoT"
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest"]
+dev = ["ruff", "mypy", "pytest", "pre-commit>=4.6.2"]
 fase1 = ["google-genai>=1.0.0", "python-dotenv>=1.0.0", "pydantic>=2.0.0", "pydantic-ai>=0.0.10"]
 
 [tool.setuptools.packages.find]
