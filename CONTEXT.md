@@ -114,19 +114,19 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **LeyendaEscena**: caption vía cadena VLM con mock final.
 - **ABORTED overlay-only v2**: canales solo pintan sin mutar en latch.
 
-## Términos de Memoria de Objetos (REMIND destilado) — Ticket 040
+## Términos de Memoria de Objetos (detalle en ADR-0011 apéndice)
 
-- **Banca Dual work/stable**: por objeto `Whitelist v2` mantiene `work[8] + stable[8]` prototipos `128-d` `ℓ2` (max 16) — `work` se actualiza, `stable` se promueve tras `promote_hits 5`. Bancas separadas: `person` (`thr 0.42`, `ABORTED` ReID N=3) vs `objetos` (`thr 0.92`, `max_misses 10`) para aislar OOD `mobilefacenet` sin degradar facial.
-- **Prototipo**: embedding `128-d` representante de una vista; `insert` si `s_max<0.78` (novel) crea nuevo, `dup s_max>0.92` dispara `EMA`, `merge >0.90` fusiona redundantes, `promote` copia a `stable` tras 5 hits, `count_cap 10` limita historial.
-- **EMA (Exponential Moving Average)**: `ê ← normalize((1-α)ê + αx)` con `α 0.02-0.08` gated por `s_max` (más similar → mayor `α`). En `AMBIGUOUS` escala `×0.2` (`α 0.004-0.016`) para no corromper con evidencia dudosa.
-- **Gating STRONG/AMBIGUOUS/WEAK**: mapeo a histéresis `Zonas coseno`: `confirmado <0.42 N=3 → STRONG full (insert/merge/promote/EMA)`, `posible 0.42-0.55 → AMBIGUOUS EMA*0.2 only`, `desconocido >0.55 → WEAK skip (no update)`. `provisional`/`ambiguous` blancos overlay no mutan `WhiteboardState` en `ABORTED` latch.
-- **Lifecycle objetos**: `NEW → TENTATIVE → CONFIRMED → INACTIVE`; `confirm_hits 2`, `max_misses 10` (1000ms @10Hz) para estáticos vs `5` para `person` (500ms). `remove false`, TTL 0 — memoria volátil.
-- **Parts/BG desactivados v1**: `parts.enabled false` y `bg.enabled false` para objetos — solo canal `appearance global` (`w 1.0`); evita `+128ms` de 4 crops `56×56` y mantiene `budget 71/92ms` dentro de `Glass-to-Glass <200ms`.
-- **Grafo de Vecinos (NeighborGraph)**: `Map<objId → NeighborEdge{o→o' cooc_count, weight, episode}>` dirigido cross-class (sin `person`), co-ocurrencia = `co-visible mismo frame D5 Whitelist 12` con `debounce 3 / force 3 / α0.5 / max 20 / jaccard 0.85`; weight kernel `p=(cAB+α)/(cA+αV)` `α0.5`; solo contexto, sin `Distance Graph` v1.
-- **Contexto Vecinal (NeighborSets)**: bonus `Δ+0.20` / penal `Δ-0.10` capped `score_assign = s_sim + Δ` sobre `cost matrix` pre-Hungarian, gate `quality≥0.35 rescue≥0.60` (solo `WEAK/AMBIGUOUS`), veto `|supported|≤3 quality≥0.60 pruning≥0.35 class≥0.50` anula `o∉supported`; quality `0.25best+0.20cov+0.15mad+0.10dens+0.15size+0.15pruning`; `min_hits 2 ratio 0.25` evita falsos vecinos `conf>0.50`.
-- **Hungarian híbrido**: `Hungarian per-class locks 0.90/0.10 dummies 0.05→0.72` primary para objetos, fallback `IoU greedy >0.5 edad 5` si `quality<0.35` o `s_sim<0.60`; costo <0.1ms `n≤13` compatible `Glass-to-Glass 71/92ms`.
-- **Ambiguo / Provisional**: `IdentidadVista.estado` `ambiguo` (gap<0.03 + quality bajo → caja blanca EMA*0.2 sin promo, no a Whiteboard `confirmado`) y `provisional` (TENTATIVE `confirm 2` antes de crear) extienden `confirmado|posible|desconocido`; `DecisionAgentica` espera si `ambiguo>2`.
-- **TTL vecino**: expiración episódica `ttl_episodes≈10` sobre `NeighborEdge.last_seen_episode` para descartar aristas fugaces de giros rápidos; no existe en REMIND (`decay 1.0`), mejora destilada para evitar bias.
+- **Banca Dual work/stable**: bancas separadas persona vs objetos.
+- **Prototipo**: embedding representante con políticas insert/EMA/merge/promote.
+- **EMA (Exponential Moving Average)**: promedio móvil gated por similitud.
+- **Gating STRONG/AMBIGUOUS/WEAK**: mapeo a histéresis de zonas coseno.
+- **Lifecycle objetos**: estados NEW → TENTATIVE → CONFIRMED → INACTIVE, memoria volátil.
+- **Parts/BG desactivados v1**: solo canal appearance global.
+- **Grafo de Vecinos (NeighborGraph)**: co-ocurrencia dirigida, solo contexto.
+- **Contexto Vecinal (NeighborSets)**: bonus/penal con gates de calidad y veto.
+- **Hungarian híbrido**: asignación per-class con fallback IoU.
+- **Ambiguo / Provisional**: estados que no mutan Whiteboard.
+- **TTL vecino**: expiración episódica de aristas fugaces.
 
 ## Términos de Percepción descriptiva interactiva (detalle en ADR-0013)
 
@@ -143,30 +143,30 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **PromptList Dinámica**: prompts libres por voz con debounce, tras flag.
 - **Mapeo en<->es-AR**: inglés para el detector, español para la voz.
 
-## Términos de arquitectura productiva (Mapa 007 — Leaky + ReID + Bridge + WebRTC)
+## Términos de arquitectura productiva (detalle en ADR-0014)
 
-- **Bypass Galería**: rama `enroll_sync`/`purge` fuera de `AsyncLeakyQueue N=1` vía canal síncrono `ws.py` + `asyncio.Lock` + `store` atomic `tmp→replace` + `PendingSync localStorage:webcam.pending_sync` + `connected_clients` broadcast — evita pérdida persistencia durante `frame drops`.
-- **Single-Writer proyección**: `WhiteboardState.last_identidades: list[IdentidadVista]|None` es proyección lectura para `overlay.js handleIdentidades` y `DecisionAgentica` contexto personalización, no afecta `ActNode → send_cmd_vel` bucle reactivo; `ABORTED overlay-only` no muta `Whiteboard`.
-- **GzAdapter agnóstico**: `plataforma/sim/gazebo_adapter.py` `GzAdapter(SimAdapter)` con `_FakeGzTransport` mock `CmdVel→Twist@gz.msgs.Twist ROS_TO_GZ` `/model/turtlebot/cmd_vel` + `Odometry GZ_TO_ROS`, intercambiable `FakeGzTransport ↔ MujocoAdapter ↔ Gazebo Transport` sin cambios caller.
-- **selectTransport fallback**: `frontend/src/ws-client.js:173 selectTransport()` probe `HEAD https://<JETSON-IP>:8554/webrtc/signal 200→webrtc else ws` (041 Q2 C + 040) — `WS D5` baseline `x86/WSL2/CI` + `webrtc://@:8554` Jetson `nvh264dec` con `fallback` sin `buffer bloat`.
-- **Warmup ONNX**: `YoloDetector.warmup(10)` dummy `1×3×640×640` en `app.py lifespan` compila grafos ONNX/TensorRT amortiza `p99 120ms` cold-start (041).
-- **Zero-Copy memoryview**: `ws.py` `decode_jpeg_b64` usa `memoryview(raw)` → `np.frombuffer` view sin copy inter-proceso hacia `np.ndarray` (041).
-- **Dropped frames**: `metrics.py dropped_frames_total` counter `record_dropped_frame()` incrementado en `receiver` cuando `AsyncLeakyQueue.put` retorna `discarded=True` (fast/slow), expuesto `GET /metrics`.
-- **threshold_per_person**: `IdentidadVista.threshold_per_person?: float|null` debug opcional `0.42-0.65` per-person calibrado, `None` si `0.42` fijo (042 Fase1) — no rompe wire `detecciones.identities`.
+- **Bypass Galería**: persistencia fuera de la cola de frames.
+- **Single-Writer proyección**: lectura para overlay sin afectar el bucle reactivo.
+- **GzAdapter agnóstico**: simulador intercambiable sin cambios al llamador.
+- **selectTransport fallback**: WebRTC con fallback a WS.
+- **Warmup ONNX**: compilación anticipada contra cold-start.
+- **Zero-Copy memoryview**: views sin copia inter-proceso.
+- **Dropped frames**: contador de descartes expuesto en métricas.
+- **threshold_per_person**: umbral por persona solo para debug.
 
-## Términos del harness P-E-V (Plan-Execute-Verify) — port de scraperargenpro
+## Términos del harness P-E-V (detalle en harness/README)
 
-- **Harness P-E-V**: loop `Plan → Execute en sandbox → Verify con sensores` portado de `scraperargenpro/harness/harness.py:300` (Ning et al. 2026 §3.4). Estado filesystem en `harness/` (`harness/harness.py:69` `ROOT/trajectory.jsonl`), traza append-only inspeccionable con `jq/grep`.
-- **3 tiers**: `read-only / sandbox-edit (default) / full-access` (`harness/harness.py:32` `TIERS`) con default restrictiva (`harness/harness.py:33` `DEFAULT_TIER=sandbox-edit`).
-- **Sensores B**: `pytest` + `ruff` + `mypy` + `domain_assertions` Embodied AI (`harness/harness.py:287` `CmdVel clamp ±1.0/±1.5`, `FakeAdapter frame_id avanza`, `SimObservation SI/world-frame`, `IdentitiesStore 128-d`) + `evidence bundle` (`harness/harness.py:86` `EvidenceBundle`).
-- **Traza A**: `harness/trajectory.jsonl` + `harness/sensor_logs/<run_id>.log` (`harness/harness.py:426` `append_trajectory`) — una línea JSON por fase `plan|execute|verify|done|human_gate`.
-- **Human gate (HITL B)**: `harness/harness.py:115` `check_permission` gatilla `needs-human` en destructivas (`rm -rf`, `push --force`, `.env`, `DROP`) o red no listada fuera de `ALLOWLIST_DOMAINS` (`localhost`, `huggingface.co`, `api.openai.com`).
-- **Sandbox-edit**: escribe solo `harness/output/` · `harness/trajectory.jsonl` · `harness/sensor_logs/` · `plataforma/webcam/backend/models/identities.json` (demo en `harness/output/sim_state.json` para no contaminar `.gitignore:22` `identities.json` real).
-- **Plan as Contract**: `harness/plan.example.json` · `harness/plan.sim-headless.json` · `harness/plan.webcam-percepcion.json` con `intent`, `files`, `invariants`, `validation`, `rollback`.
-- **Evidence bundle**: `{tests_run, linter, mypy, domain_assertions, uncovered, risk: low|medium|high, risk_reason}` + `human_gate{needed, reason, approved_by}` + `sensor_log` — criterio `verdict=ok` requiere `risk=low` + `tests_failed=0` + `domain ok`.
+- **Harness P-E-V**: loop plan → execute en sandbox → verify con sensores.
+- **3 tiers**: read-only / sandbox-edit (default) / full-access.
+- **Sensores B**: pytest + ruff + mypy + aserciones de dominio + bundle.
+- **Traza A**: trajectory append-only + logs por run.
+- **Human gate (HITL B)**: destructivas o red no listada piden humano.
+- **Sandbox-edit**: escrituras confinadas al sandbox.
+- **Plan as Contract**: intent, files, invariants, validation, rollback.
+- **Evidence bundle**: veredicto ok exige tests verdes + dominio ok.
 
-## Términos de la fusión Golden Path (ADR-0007)
+## Términos de la fusión Golden Path (detalle en ADR-0007/0008)
 
-- **Golden Path Fusión**: pipeline único y obligatorio `Issue → triage → wayfinder? → to-tickets → gitnexus-plan → gitnexus-work(+harness verify) → reviews → merge humano`. Se invoca con `/golden-path`; `pytest` solo corre el seam `CI+Harness` y nunca ejecuta skills (las skills viven a nivel agente). Reglas anti-solape: `wayfinder` solo con niebla, `to-tickets` trocea una vez, un solo fix-cycle de reviews. Single-writer `trajectory.jsonl`, `sandbox-edit` default. Orden canónico de (1) Matt Pocock (2) GitNexus (3) repo más Harness; ver ADR-0007 y ADR-0008.
-- **DoD Golden Path**: checklist verificable `CI fail rate <10%` + `harness verify verdict:ok risk:low` sin `UNKNOWN` sin confirmar + `detect_changes` sin `HIGH` ignorado + `pdg:true` `status:current`. `impact_ratio` es métrica observada, no gate en P0.
-- **Linter de Documentación**: regla `\.py:\d+` sobre `CONTEXT.md` que prohíbe anclas `archivo:línea` efímeras; el glosario es puro, los detalles viven en ADRs/prototypes. Caso anti-pattern: `ws.py:197` (Whitelist) documentado en ADR-0007, no en glosario.
+- **Golden Path Fusión**: pipeline único Issue → triage → wayfinder? → to-tickets → plan → work → reviews → merge humano.
+- **DoD Golden Path**: CI verde + verify ok/low + sin HIGH ignorado + índice corriente.
+- **Linter de Documentación**: sin anclas efímeras; detalle en ADRs.
