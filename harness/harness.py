@@ -820,6 +820,27 @@ def run_harness(
     print(f"[verify] bundle -> {sensor_log}")
     print(f"[verify] traza -> {TRAJECTORY}")
 
+    # Gobernanza Capa 2: riesgo high → gate humano real en traza.
+    # Medium sigue flujo normal (auto-repair N=3 vive en /golden-auto);
+    # solo high/impact_ratio>10 exigen aprobación antes del merge.
+    if evidence.risk == "high":
+        gate = HumanGate(needed=True, reason=evidence.risk_reason)
+        print(f"[human_gate] necesita humano: {gate.reason}")
+        print(f"[human_gate] aprobar con: --approve {run_id} --approver <nombre>")
+        append_trajectory(
+            TrajectoryEntry(
+                run_id=run_id,
+                ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                phase="human_gate",
+                tier=tier,
+                intent=intent,
+                verdict="needs-human",
+                files_touched=[],
+                human_gate=gate,
+                sensor_log=sensor_log,
+            )
+        )
+
     entry_done = TrajectoryEntry(
         run_id=run_id,
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -834,6 +855,56 @@ def run_harness(
     print(
         f"[done] run {run_id} {verdict} — inspeccionar: cat harness/trajectory.jsonl | jq . | grep {run_id} harness/trajectory.jsonl"
     )
+
+
+def review_gate(evidence: EvidenceBundle) -> dict:
+    """Gate local de revisión (Capa 3, mitad ejecutable del doble cierre).
+
+    La otra mitad (gitnexus-review blast-radius/taint + code-review
+    Standards/Spec) vive a nivel agente; ver docs/agents/review-checklist.md.
+    Veredictos: APPROVE (low limpio) | APPROVE_WITH_NOTES (medium) |
+    NEEDS-HUMAN (high, tests rotos o domain caído). Un solo fix-cycle.
+    """
+
+    reasons: list[str] = []
+    if evidence.tests_failed > 0:
+        reasons.append(f"tests_failed={evidence.tests_failed}")
+    if not evidence.domain_assertions.get("ok"):
+        reasons.append("domain assertions caídas")
+    if evidence.risk == "high":
+        reasons.append(evidence.risk_reason or "risk high")
+    if evidence.impact_ratio is not None and evidence.impact_ratio > 10:
+        reasons.append(f"impact_ratio {evidence.impact_ratio:.1f} >10")
+    if reasons:
+        return {"verdict": "NEEDS-HUMAN", "reasons": reasons}
+    if evidence.risk == "medium":
+        notes = evidence.uncovered[:3]
+        return {"verdict": "APPROVE_WITH_NOTES", "reasons": notes}
+    return {"verdict": "APPROVE", "reasons": []}
+
+
+def has_open_gate(run_id: str) -> bool:
+    """True si hay human_gate needed sin approve posterior (gate de merge).
+
+    El merge es humano por diseño (Golden Path paso 9); esta función es
+    el chequeo ejecutable previo: no mergear con gate abierto.
+    """
+    if not TRAJECTORY.exists():
+        return False
+    needed = False
+    for line in TRAJECTORY.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if rec.get("run_id") != run_id or rec.get("phase") != "human_gate":
+            continue
+        gate = rec.get("human_gate", {})
+        if gate.get("needed"):
+            needed = True
+        if gate.get("approved_by"):
+            needed = False
+    return needed
 
 
 def approve_gate(run_id: str, approver: str):
