@@ -486,7 +486,7 @@ def test_eco_llm_sanitizado(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None:
     # "hola + objetos" es visual aunque empiece con saludo: sin frescura calla.
-    from plataforma.webcam.backend.app import _es_saludo
+    from plataforma.webcam.backend.intent_router import _es_saludo
 
     assert _es_saludo("hola, ¿qué objetos ves?") is False
     assert _es_saludo("hola, ¿qué ves?") is False
@@ -502,7 +502,7 @@ def test_saludo_con_objetos_pide_vision(monkeypatch: pytest.MonkeyPatch) -> None
 def test_ack_charla_no_repite_no_veo(monkeypatch: pytest.MonkeyPatch) -> None:
     # "perfecto" es charla (no afirma visión): jamás silencio G3,
     # con o sin percepción fresca. Fija el "repite lo mismo".
-    from plataforma.webcam.backend.app import _es_charla
+    from plataforma.webcam.backend.intent_router import _es_charla
 
     assert _es_charla("perfecto") is True
     assert _es_charla("perfecto, ¿qué ves?") is False
@@ -556,7 +556,7 @@ def test_ack_charla_no_pasa_por_llm(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pregunta_visual_incluye_personas() -> None:
-    from plataforma.webcam.backend.app import _es_pregunta_visual
+    from plataforma.webcam.backend.intent_router import _es_pregunta_visual
 
     assert _es_pregunta_visual("¿quién hay en cámara?") is True
     assert _es_pregunta_visual("¿hay alguien ahí?") is True
@@ -635,3 +635,152 @@ def test_visual_stale_silencia_aunque_haya_llm(
     monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
     assert _preguntar("¿qué ves?") == {"text": ""}
     assert _preguntar("¿hay alguien ahí?") == {"text": ""}
+
+
+def test_saludo_no_toca_vlm_ni_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regresión CI: "cómo estás" sale por fast-path determinista (200
+    # equivalente) sin ejecutar VLM ni LLM aunque estén mockeados.
+    from plataforma.webcam.backend import app as app_mod
+
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    def _boom(*a: Any, **k: Any) -> Any:
+        raise AssertionError("VLM no debe ejecutarse en fast-path")
+
+    monkeypatch.setattr(app_mod, "get_vlm_client", _boom, raising=False)
+    text = _preguntar("hola, ¿cómo estás?")["text"]
+    assert text == "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+
+
+def test_meta_modelo_responde_estado_sin_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Reporte captura: "hay algún modelo..." responde estado de
+    # proveedores sin cámara, sin LLM y sin "No veo objetos".
+    from plataforma.webcam.backend.app import _texto_estado_modelo
+
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    text = _preguntar("hay algún modelo de llm que esté funcionando")["text"]
+    assert "No veo" not in text
+    assert text == _texto_estado_modelo()
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    assert "Groq" in _preguntar("¿qué modelo sos?")["text"]
+
+
+def test_ollama_solo_texto() -> None:
+    # Bloqueo multimodal: a Ollama (qwen solo-texto) jamás va imagen/base64.
+    from plataforma.webcam.backend.app import _solo_texto
+
+    msgs = [
+        {"role": "system", "content": "sos asistente"},
+        {"role": "user", "content": [{"type": "image_url", "url": "data:xxxx"}]},  # type: ignore[dict-item]
+        {"role": "user", "content": "hola"},
+    ]
+    limpio = _solo_texto(msgs)  # type: ignore[arg-type]
+    assert all(isinstance(m["content"], str) for m in limpio)
+    assert [m["content"] for m in limpio] == ["sos asistente", "hola"]
+
+
+def test_voz_groq_modelo_por_defecto_8b(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ruta dedicada /voz: sin GROQ_MODEL va a llama-3.1-8b-instant (14400 RPD).
+    from plataforma.webcam.backend import app as app_mod
+
+    vistos: list[str] = []
+
+    def _responder(prompt: str, modelo: str = "") -> str:
+        vistos.append(modelo)
+        return "ok conversacional"
+
+    monkeypatch.setitem(
+        sys.modules, "gemini_client", types.SimpleNamespace(responder=_responder)
+    )
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("sin ollama en tests")
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    # Vacío (no delenv): VozHandler recarga fase-1/.env con load_dotenv y
+    # el .env real fija GROQ_MODEL=openai/gpt-oss-20b; load_dotenv no pisa
+    # vars existentes, así que "" preserva el caso "sin override".
+    monkeypatch.setenv("GROQ_MODEL", "")
+    for var in ("GOOGLE_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    app_mod._reset_offline()
+    try:
+        assert _preguntar("contame algo interesante")["text"] == "ok conversacional"
+        assert vistos == ["llama-3.1-8b-instant"]
+        monkeypatch.setenv("GROQ_MODEL", "otro-modelo")
+        _preguntar("contame algo interesante")
+        assert vistos[-1] == "otro-modelo"
+    finally:
+        app_mod._reset_offline()
+
+
+def test_offline_mode_avisa_una_vez_y_usa_ollama(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 3 fallos Groq → OFFLINE: Groq skipeado, aviso por voz una vez,
+    # todo el tráfico a Ollama local.
+    from plataforma.webcam.backend import app as app_mod
+
+    app_mod._reset_offline()
+    try:
+        assert app_mod._groq_disponible() is True
+        app_mod._registrar_fallo_groq()
+        app_mod._registrar_fallo_groq()
+        assert app_mod._groq_disponible() is True
+        app_mod._registrar_fallo_groq()
+        assert app_mod._groq_disponible() is False
+
+        groq_calls: list[str] = []
+
+        def _responder(prompt: str, modelo: str = "") -> str:
+            groq_calls.append(modelo)
+            return "nunca (groq skipeado)"
+
+        monkeypatch.setitem(
+            sys.modules, "gemini_client", types.SimpleNamespace(responder=_responder)
+        )
+
+        class _Msg:
+            content = "respuesta local"
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+
+        class _Completions:
+            def create(self, *a: Any, **k: Any) -> Any:
+                return _Resp()
+
+        class _Chat:
+            def __init__(self) -> None:
+                self.completions = _Completions()
+
+        class _OpenAI:
+            def __init__(self, *a: Any, **k: Any) -> None:
+                pass
+
+            @property
+            def chat(self) -> Any:
+                return _Chat()
+
+        monkeypatch.setitem(
+            sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI)
+        )
+        monkeypatch.setenv("GROQ_API_KEY", "test")
+        _fijar_percepcion(monkeypatch, _atributos(), 5000)
+        primero = _preguntar("contame algo interesante")["text"]
+        assert groq_calls == []
+        assert primero.startswith("Sin nube (modo local). ")
+        segundo = _preguntar("contame algo interesante")["text"]
+        assert not segundo.startswith("Sin nube")
+    finally:
+        app_mod._reset_offline()

@@ -1,7 +1,7 @@
-"""VLM 1Hz — scene_caption via Groq → HF → Gemini fallback.
+"""VLM 1Hz — scene_caption via Groq → Groq-fallback → HF → Gemini → mock.
 
-Cadena especificada v2 (D3 #77 / R3 #74):
- Groq llama-4-scout → HF Qwen2.5-VL → Gemini 2.0 Flash → mock
+Cadena v3 (voz-llm-free):
+ Groq llama-4-scout → Groq qwen (ante 429/503) → HF Qwen2.5-VL → Gemini 2.0 Flash → mock
 Intra-op num threads no aplica (HTTP); timeout ~300ms p50.
 Sincrónico para asyncio.to_thread si se requiere.
 """
@@ -65,16 +65,15 @@ class VLMClient:
 
         # 1) Groq llama-4-scout (OpenAI compatible)
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        groq_base = (
+            os.getenv("GROQ_BASE_URL", "").strip() or "https://api.groq.com/openai/v1"
+        )
         if groq_key:
             try:
                 # Intento lazy import sin romper headless si no hay openai
                 from openai import OpenAI  # type: ignore
 
-                base_url = (
-                    os.getenv("GROQ_BASE_URL", "").strip()
-                    or "https://api.groq.com/openai/v1"
-                )
-                client = OpenAI(api_key=groq_key, base_url=base_url)
+                client = OpenAI(api_key=groq_key, base_url=groq_base)
                 model = (
                     os.getenv("GROQ_VLM_MODEL", "").strip()
                     or "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -96,6 +95,35 @@ class VLMClient:
                         conf=0.85,
                         ts=ts,
                         provider="groq",
+                    )
+            except Exception:
+                pass
+
+        # 1b) Groq fallback qwen ante 429/503 del scout (misma key/base)
+        if groq_key:
+            try:
+                from openai import OpenAI  # type: ignore
+
+                client = OpenAI(api_key=groq_key, base_url=groq_base)
+                model = (
+                    os.getenv("GROQ_VLM_FALLBACK_MODEL", "").strip() or "qwen/qwen3-32b"
+                )
+                objs_str = ", ".join(objs) or "ninguno"
+                prompt = f"Describe en espanol AR escena con: {objs_str}"
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=64,
+                )
+                txt = (resp.choices[0].message.content or "").strip()
+                if txt:
+                    return LeyendaEscena(
+                        frame_id=frame_id,
+                        caption=txt,
+                        objects=tuple(objs),
+                        conf=0.80,
+                        ts=ts,
+                        provider="groq-fallback",
                     )
             except Exception:
                 pass

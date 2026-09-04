@@ -85,7 +85,7 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **Proveedor LLM gratuito**: servicio que expone chat completions sin coste (hosted free-tier o local). Hospedado no requiere VRAM (Groq, HF Router) y habla OpenAI-compatible vía `OPENAI_BASE_URL`; local (Ollama `qwen2.5:1.5b`) requiere 2GB RAM y `http://localhost:11434/v1` con `api_key=ollama`.
 - **Free-tier hospedado**: cuota sin tarjeta (ej. Groq `llama-3.1-8b-instant` 14.400 RPD/30 RPM, HF Router `meta-llama/Llama-3.2-3B` $0.10/mes, OpenRouter `:free` 50 RPD). Expone `OPENAI_BASE_URL` distinto por proveedor.
 - **Fallback local**: Ollama `qwen2.5:1.5b` (986MB, 128k, Apache-2.0) como respaldo offline ilimitado cuando hosted falla; latencia CPU 200-350ms TTFT.
-- **Cadena de fallback**: orden `Groq → HF Router → Ollama → mock` en `plataforma/webcam/backend/app.py POST /voz` y `fase-1/gemini_client.py`; `401` corta, `429` respeta `retry-after` o 30s, mock final con mensaje tipado en `percepcion-panel`.
+- **Cadena de fallback**: orden `Ollama local → Groq (ruta dedicada /voz + VLM scout→qwen) → HF Router → Gemini → OpenAI → mock` en `POST /voz` y `fase-1/gemini_client.py`; `401` corta, `429` respeta `retry-after` o 30s, mock final con mensaje tipado en `percepcion-panel`. Tras 3 fallos Groq seguidos entra `OFFLINE_MODE` (cooldown con aviso por voz, todo a Ollama).
 - **EnrollSync / EnrollAck**: evento WS `enroll_sync {id,nombre,embedding[128],ts}` (bypass `Leaky Queue N=1`) + ack `enroll_ack {id,status}`; id `nanoid` 8-char garantiza idempotencia en reintentos tras reconexión.
 - **Purge / PurgeAck**: evento `purge {all:true|ids:[]}` broadcast a todos los sockets activos que limpia `localStorage:webcam.identities` + `backend/models/identities.json` simultáneamente, con `purge_ack` por cliente.
 - **PendingSync**: cola `webcam.pending_sync` en `localStorage` que acumula `enroll_sync`/`purge` cuando `ws.readyState !== OPEN` para cero pérdida offline, vaciada en `ws.onopen`.
@@ -111,7 +111,7 @@ Glosario y nada más: sin specs, sin implementación. Los términos se agregan a
 - **PercepcionVista**: agregado `WhiteboardState.percepcion_vista: {detecciones, posturas, profundidades, leyenda}` con TTL por campo (detecciones 100ms, postura 150ms, profundidad 200ms, leyenda 1000ms), single-writer memoria, sin `transcript`; consumido por `DecisionAgentica`.
 - **Postura**: `Postura {frame_id, keypoints: [{x,y,conf}] 17 COCO [0,1], conf_global}` producida por `YOLO11n-pose` 5Hz piggyback en `detecciones`; ABORTED overlay-only.
 - **Profundidad**: `Profundidad {z_rel: float 0..1, z_m: float|null, box_center: {x,y}}` mediana 3×3 centro bbox desde `MiDaS small 256` (~42ms) 5Hz piggyback; `intra_op_num_threads=2` + `asyncio.to_thread` paralelo sin jitter.
-- **LeyendaEscena**: `LeyendaEscena {caption: str es-AR 1 frase, objects: [str], conf, ts}` vía VLM 1Hz `scene_caption` separado (leaky-skip 1/30) cadena `Groq llama-4-scout → HF Qwen2.5-VL → Gemini 2.0 Flash → mock` (~300ms p50).
+- **LeyendaEscena**: `LeyendaEscena {caption: str es-AR 1 frase, objects: [str], conf, ts}` vía VLM 1Hz `scene_caption` separado (leaky-skip 1/30) cadena `Groq llama-4-scout → Groq qwen (ante 429/503) → HF Qwen2.5-VL → Gemini 2.0 Flash → mock` (~300ms p50).
 - **ABORTED overlay-only v2**: en `ABORTED` latch todos los canales v2 (postura/profundidad/caption) solo pintan `overlay.js`/`percepcion-panel` sin mutar `WhiteboardState`.
 
 ## Términos de Memoria de Objetos (REMIND destilado) — Ticket 040
