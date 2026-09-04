@@ -1,0 +1,11 @@
+models/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.onnx
+*.task
+trajectory.jsonl

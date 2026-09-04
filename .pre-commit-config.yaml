@@ -15,6 +15,18 @@ repos:
         exclude: '^Guía Maestra de Aprendizaje en Inteligencia Artificial Corpórea \(Embodied AI\) e AIoT\.md$'
   - repo: local
     hooks:
+      - id: mypy-plataforma
+        name: mypy plataforma/webcam
+        entry: uv run mypy plataforma/webcam
+        language: system
+        files: ^plataforma/
+        pass_filenames: false
+      - id: pytest-plataforma
+        name: pytest plataforma/webcam
+        entry: uv run pytest plataforma/webcam -q
+        language: system
+        files: ^plataforma/
+        pass_filenames: false
       - id: citas-existen
         name: citas a docs/tests/harness existen
         entry: python .github/scripts/check-citas-existen.py

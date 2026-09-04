@@ -94,6 +94,12 @@ class AtributoVista(BaseModel):
     color_hsv_hex: str = Field(description="hex #rrggbb dominante")
     color_vlm: str | None = Field(default=None, description="VLM 1Hz libre, null si no")
     color: str = Field(description="=color_vlm si fresh else color_hsv")
+    is_world: bool = Field(
+        default=False, description="True si YOLO-World open-vocab 048"
+    )
+    prompt_origen: str | None = Field(
+        default=None, description="prompt PromptList origen si is_world"
+    )
     frame_id: int = Field(default=0, description="frame origen")
     ts: float = Field(default=0.0, description="unix ms infer")
     ttl_ms: dict[str, int] = Field(

@@ -1,0 +1,18 @@
+{
+  "intent": "voz grounded — Muse solo habla de AtributoVista (encierro Grammar-Constrained)",
+  "files": ["plataforma/webcam/backend/app.py", "fase-1/orchestrator.py", "harness/trajectory.jsonl"],
+  "invariants": [
+    "Todo prompt voz → system prompt inyecta last_atributos (≤500ms) con track_id/color_hsv_hex/z_rel/prompt_origen",
+    "Respuesta sin last_atributos fresh → 'No veo objetos ahora (frame stale)' sin hallucination Walmart",
+    "is_world violeta preservado (overlay.js WORLD_COLOR)",
+    "ABORTED overlay-only sin mutar Whiteboard",
+    "LeakyQueue N=1 y Glass-to-Glass <200ms intactos"
+  ],
+  "validation": [
+    "uv run ruff check plataforma/webcam/backend",
+    "uv run pytest plataforma/webcam -k voz -q",
+    "harness domain: pregunta 'qué ves?' → responde person rojo grande sin ir a Groq"
+  ],
+  "rollback": "git checkout -- plataforma/webcam/backend/app.py fase-1/orchestrator.py",
+  "target_url": "http://localhost:8000/voz"
+}

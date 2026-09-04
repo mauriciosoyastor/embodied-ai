@@ -27,6 +27,25 @@ python fase-0/main.py fase-0/ejemplo.txt   # conteo de palabras
 pytest                                     # tests
 ```
 
+## Harness P-E-V (Plan-Execute-Verify)
+
+Port de `scraperargenpro/harness/` (Ning et al. 2026 §3.4) — loop `Plan → Execute → Verify` con traza inspeccionable.
+
+```bash
+# demo headless (sin red, sin MuJoCo)
+python harness/harness.py --allow-network=false --intent "demo: validar sim headless"
+python harness/harness.py --plan harness/plan.example.json           # plan as contract
+python harness/harness.py --plan harness/plan.sim-headless.json      # sim FakeAdapter+TestModel
+uv run python harness/harness.py --allow-network=false --plan harness/plan.example.json
+
+# inspeccionar traza
+cat harness/trajectory.jsonl | jq .
+grep human_gate harness/trajectory.jsonl
+cat harness/sensor_logs/<run_id>.log
+```
+
+Ver `harness/README.md` para tiers (`sandbox-edit` default), sensores (`pytest/ruff/mypy` + `CmdVel`/`SimObservation`) y `human_gate`.
+
 ## Calidad
 
 Cada PR pasa por CI (GitHub Actions) con: **ruff** (lint + format), **mypy** (typecheck estricto) y **pytest**. Localmente, pre-commit aplica los checks de ruff y de higiene.

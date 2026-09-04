@@ -6,6 +6,7 @@ Lifespan lazy: inicializa YOLO+MediaPipe si models presentes, loguea si stub.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -22,9 +23,226 @@ from plataforma.webcam.backend.ws import perception_ws_handler
 logger = logging.getLogger(__name__)
 
 
+class TurnoHistorial(BaseModel):
+    role: str
+    content: str
+
+
 class VozRequest(BaseModel):
     prompt: str
     modelo: str | None = None
+    historial: list[TurnoHistorial] | None = None
+
+
+# Grounding voz (mapa #130 G1/G3): frescura TTL por campo.
+# 2000ms en vez de 200ms: con inferencia CPU ~800ms/frame + envío 2Hz toda
+# percepción "fresca" real llega con ~700-1000ms de edad; 200ms solo servía
+# con GPU. Para conversar, una foto de hace 1s sigue siendo válida.
+FRESH_ATRIBUTOS_MS = 2000
+FRESH_Z_MS = 500
+
+# Saludo/smalltalk que NO afirma nada visual: no requiere percepción fresca.
+_SALUDO_KEYWORDS = (
+    "hola",
+    "buenas",
+    "cómo estás",
+    "como estas",
+    "qué tal",
+    "que tal",
+    "quién sos",
+    "quien sos",
+    "cómo te llam",
+    "como te llam",
+    "gracias",
+    "chau",
+    "adiós",
+    "adios",
+    "buen día",
+    "buenas tardes",
+    "buenas noches",
+)
+# Si el prompt trae alguna de estas, es pregunta visual aunque empiece con hola.
+_VISION_KEYWORDS = (
+    "color",
+    "tamaño",
+    "tamano",
+    "qué ves",
+    "que ves",
+    "qué hay",
+    "que hay",
+    "izquierda",
+    "derecha",
+    "distancia",
+    "cerca",
+    "lejos",
+    "mira",
+    "mirá",
+    "busca",
+    "buscá",
+    "dónde",
+    "donde",
+    "taza",
+    "cup",
+    "tv",
+    "objeto",
+    "objetos",
+    "ves",
+    "veo",
+    "ven",
+    "hay",
+    "muest",
+    "enseñ",
+    "ensen",
+)
+
+
+def _es_saludo(prompt: str) -> bool:
+    """True si es smalltalk sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _SALUDO_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
+
+
+# Acuse conversacional que NO afirma nada visual (perfecto, genial, dale):
+# como el saludo, pasa sin cámara para no repetir "No veo objetos".
+_CHARLA_KEYWORDS = (
+    "perfecto",
+    "genial",
+    "buenísimo",
+    "buenisimo",
+    "excelente",
+    "bárbaro",
+    "barbaro",
+    "entendido",
+    "de nada",
+    "dale",
+    "jaja",
+)
+
+
+def _es_charla(prompt: str) -> bool:
+    """True si es acuse sin afirmación visual (no necesita cámara)."""
+    low = prompt.lower()
+    if not any(k in low for k in _CHARLA_KEYWORDS):
+        return False
+    return not any(k in low for k in _VISION_KEYWORDS)
+
+
+# Pregunta que SÍ afirma visión (requiere percepción fresca; sin ella G3 calla).
+# Incluye personas: "¿quién hay?", "¿ves a alguien?", "¿hay gente?".
+_PERSONA_KEYWORDS = (
+    "persona",
+    "personas",
+    "alguien",
+    "gente",
+    "quién hay",
+    "quien hay",
+    "quién está",
+    "quien esta",
+    "ves a",
+    "se ve",
+    "cuánt",
+    "cuant",
+)
+
+
+def _es_pregunta_visual(prompt: str) -> bool:
+    """True si el prompt pide visión (objetos o personas)."""
+    low = prompt.lower()
+    if any(k in low for k in _VISION_KEYWORDS):
+        return True
+    return any(k in low for k in _PERSONA_KEYWORDS)
+
+
+# Clases COCO → es-AR para respuestas habladas (el detector habla inglés).
+_CLS_ES: dict[str, str] = {
+    "person": "persona",
+    "chair": "silla",
+    "couch": "sillón",
+    "bottle": "botella",
+    "cup": "taza",
+    "cell phone": "celular",
+    "laptop": "notebook",
+    "keyboard": "teclado",
+    "mouse": "mouse",
+    "book": "libro",
+    "backpack": "mochila",
+    "handbag": "cartera",
+    "remote": "control remoto",
+    "tv": "tele",
+    "bed": "cama",
+    "dining table": "mesa",
+    "toilet": "inodoro",
+    "potted plant": "planta",
+    "microwave": "microondas",
+    "oven": "horno",
+    "sink": "pileta",
+    "refrigerator": "heladera",
+    "clock": "reloj",
+    "vase": "florero",
+    "toaster": "tostadora",
+    "wine glass": "copa",
+    "bowl": "bol",
+    "scissors": "tijera",
+    "teddy bear": "peluche",
+    "toothbrush": "cepillo de dientes",
+}
+
+
+def _cls_es(cls: str) -> str:
+    """Nombre en es-AR para una clase del detector (fallback: original)."""
+    return _CLS_ES.get(str(cls or "").strip().lower(), str(cls))
+
+
+def _fresh_snapshot(
+    max_age_ms: int = FRESH_ATRIBUTOS_MS,
+) -> tuple[list[dict[str, Any]], int, int] | None:
+    """Snapshot (atributos, frame_id, age_ms) si la percepción está fresca.
+
+    Lee los globales de `ws` con import diferido (sin ciclo). `None` = stale
+    o ausente: la voz no debe afirmar nada (silencio G3).
+    """
+    try:
+        import time as _t
+
+        from plataforma.webcam.backend.ws import last_atributos, last_frame_id, last_ts
+
+        age = int(_t.time() * 1000) - int(last_ts or 0)
+        if last_atributos and age <= max_age_ms:
+            return list(last_atributos), int(last_frame_id), age
+    except Exception:
+        pass
+    return None
+
+
+# Veto G2/T1: todo lo que jamás debe llegar a la UI (ni TTS ni panel).
+_LEAK_PATTERNS = (
+    r"\[Percepci[^\]]*\]",  # eco del prefijo [...] (mock verbatim, paso 2)
+    r"Instrucci.n grounding:[^.]*\.",
+    r"responde SOLO[^.]*\.",
+    r"\(mock grounded[^)]*\)",
+    r"mock grounded[^.\n]*",
+    r"frame #\d+",
+    r"age \d+ms",
+    r"#[0-9a-fA-F]{3,8}\b",
+    r"\bz:\?",
+    r"\bWORLD:[^\s]*",
+)
+_LEAK_RE = re.compile("|".join(_LEAK_PATTERNS))
+_EMPTY_PARENS_RE = re.compile(r"\(\s*\)")
+_SPACES_RE = re.compile(r"[ \t]{2,}")
+
+
+def strip_grounding_leak(text: str) -> str:
+    """Defensa en profundidad: quita ecos de grounding/debug de una salida.
+
+    Se aplica a TODA respuesta `text` (incluido texto LLM, que puede repetir
+    el prefijo). Idempotente; el contenido legítimo pasa intacto.
+    """
+    cleaned = _LEAK_RE.sub("", text)
+    cleaned = _EMPTY_PARENS_RE.sub("", cleaned)
+    return _SPACES_RE.sub(" ", cleaned).strip()
 
 
 @asynccontextmanager
@@ -42,13 +260,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Gesture stub activo — model ausente (lazy)")
         else:
             logger.info("Gesture cargado: %s", gesture.model_path)
-        # Warmup ONNX/TensorRT — amortiza cold-start p99 120ms (041)
+        # Warmup ONNX/TensorRT — amortiza cold-start p99 120ms (041) + World-s 048
         try:
             if not yolo.is_stub:
                 yolo.warmup(10)
                 logger.info("YOLO warmup(10) ok")
         except Exception as exc:  # pragma: no cover
             logger.warning("YOLO warmup falló: %s", exc)
+        try:
+            from plataforma.webcam.backend.inference.yolo_world import (
+                get_yolo_world_detector,
+            )
+
+            world = get_yolo_world_detector()
+            if not world.is_stub:
+                world.warmup(10)
+                logger.info(
+                    "YOLO-World warmup(10) ok prompts=%d txt_feats=%s",
+                    len(world.prompt_list),
+                    getattr(world, "_txt_feats_static", None) is not None,
+                )
+            else:
+                logger.info(
+                    "YOLO-World stub — model ausente (lazy) prompts=%d",
+                    len(world.prompt_list),
+                )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("YOLO-World warmup falló: %s", exc)
         # Hidratar identities.json (hibrido)
         ids = await store.load()
         logger.info("Identities cargadas: %d", len(ids))
@@ -132,48 +370,139 @@ async def fsm_state() -> dict[str, str]:
 
 @app.post("/voz")
 async def VozHandler(req: VozRequest) -> dict[str, str]:
-    """Proxy voz: Gemini primero, OpenAI fallback, mock final. S3 anclaje AtributoVista."""  # noqa: E501
+    """Proxy voz: Ollama local primero, Groq/HF/Gemini backup, mock final.
+    S3 anclaje AtributoVista.
+
+    Grounded harness (mapa #130): todo prompt se encierra con
+    Percepción viva fresca (TTL G1); sin frescura la voz calla (G3).
+    """  # noqa: E501
     prompt = req.prompt.strip()
     if not prompt:
         return {"text": ""}
-    # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves, responder desde last_atributos si fresh <500ms  # noqa: E501
-    try:
-        low_q = prompt.lower()
-        is_color_q = any(
-            k in low_q
-            for k in [
-                "color",
-                "tamaño",
-                "tamano",
-                "qué ves",
-                "que ves",
-                "izquierda",
-                "derecha",
-                "distancia",
+
+    # Gate G1/G3 (mapa #130): sin percepción fresca no se afirma NADA visual.
+    # Solo las preguntas visuales (objetos o personas) callan sin cámara.
+    # Charla genérica ("contame algo", "¿y entonces?") pasa pelada al LLM
+    # para conversar fluido sin afirmar visión (no inventa por system prompt).
+    es_saludo = _es_saludo(prompt)
+    es_charla = _es_charla(prompt)
+    es_visual = _es_pregunta_visual(prompt)
+    snapshot = _fresh_snapshot()
+    if snapshot is None and es_visual and not es_charla:
+        return {"text": ""}
+    if snapshot is None:
+        last_atributos: list[dict[str, Any]] = []
+        last_frame_id, _age = 0, 0
+    else:
+        last_atributos, last_frame_id, _age = snapshot
+
+    # Acuse conversacional: respuesta determinista SIN pasar por el LLM.
+    # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados (con o
+    # sin historial), y ese eco realimenta el historial ("repite lo mismo").
+    # El saludo tampoco afirma visión: responde determinista sin LLM.
+    if es_saludo and not es_visual:
+        return {
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        }
+    if es_charla:
+        return {"text": "Entendido, te sigo escuchando."}
+
+    # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
+    # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para
+    # que el LLM no invente objetos: un saludo no necesita grounding.
+    if snapshot is None:
+        prompt_grounded = prompt
+    else:
+        _descs = ", ".join(
+            [
+                f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
+                f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
+                for a in last_atributos[:4]
             ]
         )
-        if is_color_q:
-            import time
-
-            from plataforma.webcam.backend.ws import (
-                last_atributos,
-                last_frame_id,
-                last_ts,
+        grounded_prefix = (
+            f"[Percepción viva frame #{last_frame_id} age {_age}ms: {_descs}] "
+            f"Instrucción grounding: responde SOLO sobre lo que ves. "  # noqa: E501
+            f"Si no ves, di 'No veo objetos ahora'. Prohibido inventar precios/Walmart. "  # noqa: E501
+        )
+        # prompt efectivo para LLM
+        prompt_grounded = f"{grounded_prefix}Usuario dice: {prompt}"
+    # S3 — anclaje voz a AtributoVista: si pregunta por color/tamaño/qué ves/
+    # personas, responder desde last_atributos (determinista, sin LLM).
+    try:
+        low_q = prompt.lower()
+        is_persona_q = any(
+            k in low_q
+            for k in [
+                "persona",
+                "personas",
+                "alguien",
+                "gente",
+                "quién hay",
+                "quien hay",
+                "quién está",
+                "quien esta",
+                "hay gente",
+            ]
+        )
+        is_color_q = (
+            any(
+                k in low_q
+                for k in [
+                    "color",
+                    "tamaño",
+                    "tamano",
+                    "qué ves",
+                    "que ves",
+                    "qué hay",
+                    "que hay",
+                    "izquierda",
+                    "derecha",
+                    "distancia",
+                    "cuánt",
+                    "cuant",
+                    "objeto",
+                    "objetos",
+                ]
             )
-
-            now_ms = int(time.time() * 1000)
-            age = now_ms - int(last_ts or 0)
-            if last_atributos and age < 500:
+            or is_persona_q
+        )
+        if is_color_q:
+            # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
+            if last_atributos:
                 # buscar taza/cup si pregunta específica, sino listar todos
                 target = None
                 if "taza" in low_q or "cup" in low_q:
                     target = next(
                         (a for a in last_atributos if a.get("cls") == "cup"), None
                     )
-                elif "tv" in low_q:
+                elif "tv" in low_q or "tele" in low_q:
                     target = next(
                         (a for a in last_atributos if a.get("cls") == "tv"), None
                     )
+                elif is_persona_q:
+                    target = next(
+                        (a for a in last_atributos if a.get("cls") == "person"),
+                        None,
+                    )
+                    if target is None:
+                        return {"text": strip_grounding_leak("No veo personas ahora.")}
+                    persons = [a for a in last_atributos if a.get("cls") == "person"]
+                    if "cuánt" in low_q or "cuant" in low_q:
+                        n_p = len(persons)
+                        return {
+                            "text": strip_grounding_leak(
+                                f"Veo {n_p} persona{'s' if n_p != 1 else ''}."
+                            )
+                        }
+                    n_persons = len(persons)
+                    plural_p = "s" if n_persons != 1 else ""
+                    return {
+                        "text": strip_grounding_leak(
+                            f"Sí, hay {n_persons} persona{plural_p} en cámara."
+                        )
+                    }
                 # relaciones espaciales: izquierda/derecha por centroide
                 if "izquierda" in low_q or "derecha" in low_q and "taza" in low_q:
                     sorted_at = sorted(
@@ -198,46 +527,73 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         if "izquierda" in low_q and left:
                             a = left[-1]
                             return {
-                                "text": f"A la izquierda de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')} a z {a.get('z_rel') or 'desconocida'} (frame #{last_frame_id})."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la izquierda de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                         if "derecha" in low_q and right:
                             a = right[0]
                             return {
-                                "text": f"A la derecha de la taza está {a.get('cls')} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                "text": strip_grounding_leak(
+                                    f"A la derecha de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
+                                )
                             }
                 if target and "color" in low_q:
                     return {
-                        "text": f"La {target.get('cls')} es {target.get('color')} ({target.get('color_hsv_hex')}) tamaño {target.get('tamano')} área {round(float(target.get('area', 0)) * 100)}% a distancia {target.get('z_rel') or 'media'} (frame #{last_frame_id}, age {age}ms)."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"La {_cls_es(str(target.get('cls')))} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
+                        )
                     }
-                if "qué ves" in low_q or "que ves" in low_q:
+                if (
+                    "qué ves" in low_q
+                    or "que ves" in low_q
+                    or "qué hay" in low_q
+                    or "que hay" in low_q
+                    or "objeto" in low_q
+                    or "objetos" in low_q
+                ):
                     descs = ", ".join(
                         [
-                            f"{a.get('cls')} {a.get('color')} {a.get('tamano')} z{a.get('z_rel') or '?'}"  # noqa: E501
+                            f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"  # noqa: E501
                             for a in last_atributos[:4]
                         ]
                     )
+                    n = len(last_atributos)
                     return {
-                        "text": f"Veo {len(last_atributos)} objetos (frame #{last_frame_id}): {descs}."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
+                        )
                     }
                 if target:
                     return {
-                        "text": f"Veo {target.get('cls')} {target.get('color')} {target.get('tamano')} (frame #{last_frame_id})."  # noqa: E501
+                        "text": strip_grounding_leak(
+                            f"Veo {_cls_es(str(target.get('cls')))} {target.get('color')} {target.get('tamano')}."  # noqa: E501
+                        )
                     }
-            # S3 dynamic PromptList: extraer prompts si YOLO_WORLD_DYNAMIC_BY_VOZ
-            try:
-                from plataforma.webcam.backend.config import YOLO_WORLD_DYNAMIC_BY_VOZ
+    except Exception:
+        pass
+    # S3 dynamic PromptList: FIX — fuera de is_color_q para que "mira/busca/dónde está" dispare siempre si DYNAMIC=True  # noqa: E501
+    try:
+        from plataforma.webcam.backend.config import YOLO_WORLD_DYNAMIC_BY_VOZ
 
-                if YOLO_WORLD_DYNAMIC_BY_VOZ:
-                    from plataforma.webcam.backend.inference.yolo_world import (
-                        extract_prompts_from_transcript,
-                        get_yolo_world_detector,
-                    )
+        if YOLO_WORLD_DYNAMIC_BY_VOZ:
+            from plataforma.webcam.backend.inference.yolo_world import (
+                extract_prompts_from_transcript,
+                get_yolo_world_detector,
+            )
 
-                    prompts = extract_prompts_from_transcript(prompt)
-                    if prompts:
-                        get_yolo_world_detector(prompt_list=prompts)
-            except Exception:
-                pass
+            prompts = extract_prompts_from_transcript(prompt)
+            if prompts:
+                get_yolo_world_detector(prompt_list=prompts)
+                # ack corto si es comando percepción puro — evita LLM fallback "incompleto"  # noqa: E501
+                low2 = prompt.lower()
+                if any(
+                    k in low2
+                    for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
+                ):  # noqa: E501
+                    return {
+                        "text": strip_grounding_leak(f"Buscando {', '.join(prompts)}.")
+                    }
     except Exception:
         pass
     import os
@@ -261,13 +617,70 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
     has_hf = bool(os.getenv("HF_TOKEN", "").strip())
 
-    # 1) Groq primario (Ticket 021: Groq→HF→Gemini→mock)
+    # 0) Ollama local PRIMARIO (gratis/offline; docs 020-ollama-fallback).
+    #    Env: OLLAMA_BASE_URL (default 127.0.0.1:11434/v1),
+    #    OLLAMA_MODEL (default qwen2.5:1.5b). Default IPv4 explícita:
+    #    `localhost` puede resolver a ::1 donde Docker Desktop hace relay
+    #    a OTRO Ollama sin nuestros modelos. Si el daemon no está,
+    #    falla rápido (connect) y sigue la cadena hospedada.
+    ollama_base = (
+        os.getenv("OLLAMA_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
+    )
+    ollama_model = os.getenv("OLLAMA_MODEL", "").strip() or "qwen2.5:1.5b"
+    # Conversación fluida: memoria multi-turno + system conciso es-AR.
+    # Sin historial el contrato viejo (solo prompt) sigue idéntico.
+    _system = (
+        "Sos un asistente de voz en español rioplatense. "
+        "Respondé corto (1-2 frases, máximo 60 palabras), "
+        "conversacional, sin listas ni tecnicismos. "
+        "Si hay percepción viva entre corchetes, usala; si no, no inventes objetos."
+    )
+    _hist: list[dict[str, str]] = []
+    try:
+        for t in req.historial or []:
+            r = (t.role or "").strip().lower()
+            c = (t.content or "").strip()
+            if r not in ("user", "assistant") or not c:
+                continue
+            _hist.append({"role": r, "content": c[:500]})
+        _hist = _hist[-6:]
+    except Exception:
+        _hist = []
+    _messages: list[dict[str, str]] = [{"role": "system", "content": _system}]
+    _messages.extend(_hist)
+    _messages.append({"role": "user", "content": prompt_grounded})
+    try:
+        from openai import OpenAI
+
+        _ollama = OpenAI(api_key="ollama", base_url=ollama_base)
+        _resp = _ollama.chat.completions.create(
+            model=ollama_model,
+            messages=_messages,  # type: ignore[arg-type]
+            timeout=10,
+            temperature=0.6,
+            max_tokens=150,
+            extra_body={
+                "options": {
+                    "temperature": 0.6,
+                    "num_predict": 120,
+                    "num_ctx": 2048,
+                },
+                "keep_alive": "5m",
+            },
+        )
+        _txt = (_resp.choices[0].message.content or "").strip()
+        if _txt:
+            return {"text": strip_grounding_leak(_txt)}
+    except Exception as e:
+        logger.warning("Ollama fallo: %s", e)
+
+    # 1) Groq secundario (antes primario Ticket 021) — grounded
     if has_groq:
         try:
             modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
-            text = gemini_client.responder(prompt, modelo=modelo)
+            text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
-                return {"text": text}
+                return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Groq fallo: %s", e)
 
@@ -284,10 +697,10 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             os.environ["OPENAI_BASE_URL"] = hf_base
             try:
                 text = gemini_client.responder(
-                    prompt, modelo="meta-llama/Llama-3.2-3B-Instruct"
+                    prompt_grounded, modelo="meta-llama/Llama-3.2-3B-Instruct"
                 )
                 if text.strip():
-                    return {"text": text}
+                    return {"text": strip_grounding_leak(text)}
             finally:
                 if orig_base:
                     os.environ["OPENAI_BASE_URL"] = orig_base
@@ -296,19 +709,19 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         except Exception as e:
             logger.warning("HF Router fallo: %s", e)
 
-    # 3) Intentar Gemini legacy
+    # 3) Intentar Gemini legacy — grounded
     if has_google:
         try:
             modelo = (
                 os.getenv("GEMINI_MODEL", "").strip()
                 or gemini_client.MODELO_GEMINI_LEGACY
             )
-            text = gemini_client.responder(prompt, modelo=modelo)
-            return {"text": text}
+            text = gemini_client.responder(prompt_grounded, modelo=modelo)
+            return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Gemini fallo: %s", e)
 
-    # 4) Intentar OpenAI fallback (usa GROQ_MODEL si existe, sino gpt-3.5-turbo)
+    # 4) Intentar OpenAI fallback (usa GROQ_MODEL si existe, sino gpt-3.5-turbo) — grounded  # noqa: E501
     if has_openai:
         try:
             from openai import OpenAI
@@ -322,43 +735,38 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             fallback_model = os.getenv("GROQ_MODEL", "").strip() or "gpt-3.5-turbo"
             resp = client.chat.completions.create(
                 model=fallback_model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt_grounded}],
             )
             txt = (resp.choices[0].message.content or "").strip()
             if txt:
-                return {"text": txt}
+                return {"text": strip_grounding_leak(txt)}
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
 
-    # 3) Mock final segun patrones
-    low = prompt.lower()
-    if "hola" in low:
+    # Mock final (mapa #130 G3): silencio total — el mock nunca afirma visión
+    # ni devuelve el prefijo (era el leak de la captura). Las respuestas
+    # deterministas con visión fresca ya salieron por atajos S3 arriba.
+    # Excepción: saludo — no afirma visión, así que responde determinista
+    # en vez de callar (conversación fluida sin cámara ni keys).
+    if es_saludo:
         return {
-            "text": (
-                "¡Hola! Soy Muse Spark 1.2 free vía OpenAI (fallback). "
-                "¿Como te registro por camara? Mirá y hacé pulgar arriba."
-            )
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
         }
-    if "registr" in low:
-        return {
-            "text": (
-                "Perfecto, para registrarte mirá a la camara y "
-                "hacé pulgar arriba. (fallback OpenAI)"
-            )
-        }
-    if "quien" in low:
-        return {
-            "text": (
-                "Soy Muse Spark 1.2, orquestador cognitivo de Embodied AI. "
-                "(fallback OpenAI)"
-            )
-        }
-    return {
-        "text": (
-            f'Recibio: "{prompt}" (fallback OpenAI — '
-            "Gemini y OpenAI no disponibles por el momento)."
+    # Fragmento/pregunta no clasificada CON visión fresca: describir lo que
+    # se ve en vez de callar (el STT continuo suele entregar fragmentos como
+    # "qué" de "qué ves"). G3 intacto: solo afirma datos frescos reales.
+    if snapshot is not None and last_atributos:
+        _n = len(last_atributos)
+        _descs = ", ".join(
+            f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"
+            for a in last_atributos[:4]
         )
-    }
+        return {
+            "text": strip_grounding_leak(
+                f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}."
+            )
+        }
+    return {"text": ""}
 
 
 class VisionCaptionRequest(BaseModel):

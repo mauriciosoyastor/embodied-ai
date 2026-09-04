@@ -27,6 +27,13 @@ HAND_URL = (
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
 DEPTH_URL = "https://huggingface.co/Heliosoph/midas-small-onnx/resolve/main/midas_v21_small_256.onnx"
+YOLO_WORLD_URL = (
+    "https://huggingface.co/Instemic/yolo-world-onnx/resolve/main/yolov8s-worldv2.onnx"
+)
+# Fallback PT para export local si HF no disponible (Ultralytics assets v8.2.0 24.7MB)
+YOLO_WORLD_PT_URL = (
+    "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8s-worldv2.pt"
+)
 # Visi├│n viva 036 ÔÇö frontend/public/models/ (BlazeFace + mobilefacenet)
 BLAZE_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
@@ -48,6 +55,7 @@ EXPECTED_SHA256: dict[str, str | None] = {
     "yolo11n-pose.onnx": None,
     "midas_small_256.onnx": None,
     "hand_landmarker.task": None,
+    "yolo-world-s.onnx": "381ced485b23ed8f06de3e82bb2745e1420c181c64f0a176784c34a959d550a1",  # noqa: E501
 }
 
 MODELS: dict[str, dict[str, str]] = {
@@ -55,6 +63,7 @@ MODELS: dict[str, dict[str, str]] = {
     "yolo11n-pose.onnx": {"url": POSE_URL},
     "midas_small_256.onnx": {"url": DEPTH_URL},
     "hand_landmarker.task": {"url": HAND_URL},
+    "yolo-world-s.onnx": {"url": YOLO_WORLD_URL},
 }
 
 # Modelos frontend visi├│n viva (036) ÔÇö destino frontend/public/models/
@@ -188,6 +197,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--face-url", default=MOBILEFACENET_URL, help="override URL mobilefacenet.onnx"
     )
     p.add_argument(
+        "--world-url",
+        default=YOLO_WORLD_URL,
+        help="override URL yolo-world-s.onnx (Instemic 48.8MB)",
+    )
+    p.add_argument(
         "--skip-frontend",
         action="store_true",
         help="no descargar modelos frontend (blaze/mobilefacenet)",
@@ -211,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         "yolo11n-pose.onnx": args.pose_url,
         "midas_small_256.onnx": args.depth_url,
         "hand_landmarker.task": args.hand_url,
+        "yolo-world-s.onnx": args.world_url,
     }
 
     ok = True
@@ -219,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         "yolo11n-pose.onnx",
         "midas_small_256.onnx",
         "hand_landmarker.task",
+        "yolo-world-s.onnx",
     ):
         url = urls[filename]
         dest = models_dir / filename
