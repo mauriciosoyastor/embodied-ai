@@ -664,6 +664,7 @@ source = { editable = "." }
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -686,6 +687,7 @@ dev = [
 requires-dist = [
     { name = "google-genai", marker = "extra == 'fase1'", specifier = ">=1.0.0" },
     { name = "mypy", marker = "extra == 'dev'" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.2" },
     { name = "pydantic", marker = "extra == 'fase1'", specifier = ">=2.0.0" },
     { name = "pydantic-ai", marker = "extra == 'fase1'", specifier = ">=0.0.10" },
     { name = "pytest", marker = "extra == 'dev'" },

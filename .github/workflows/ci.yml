@@ -27,6 +27,8 @@ jobs:
         run: uv run mypy fase-0
       - name: Tests
         run: uv run pytest
+      - name: Golden seam
+        run: uv run pytest tests/test_golden_path_puro.py -q
       - name: CONTEXT linter (ADR-0007)
         run: uv run python harness/check_context.py
       - name: Pre-commit guard (no --no-verify)
