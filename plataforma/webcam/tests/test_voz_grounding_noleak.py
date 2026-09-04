@@ -635,3 +635,28 @@ def test_visual_stale_silencia_aunque_haya_llm(
     monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
     assert _preguntar("¿qué ves?") == {"text": ""}
     assert _preguntar("¿hay alguien ahí?") == {"text": ""}
+
+
+def test_viendo_ahora_es_visual() -> None:
+    from plataforma.webcam.backend.app import _es_pregunta_visual
+
+    assert _es_pregunta_visual("qué estás viendo ahora") is True
+    assert _es_pregunta_visual("¿qué estás mirando?") is True
+    assert _es_pregunta_visual("¿qué observás?") is True
+
+
+def test_viendo_ahora_fresco_describe(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Captura: "qué estás viendo ahora" con visión fresca describe
+    # determinista S3 en vez de caer al LLM ("No veo objetos ahora").
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    text = _preguntar("qué estás viendo ahora")["text"]
+    assert text == "Veo 1 objeto: persona naranja grande."
+    _sin_veto(text)
+
+
+def test_viendo_ahora_stale_calla(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sin frescura: silencio G3 (el frontend pide cámara vía __SIN_CAMARA__).
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    assert _preguntar("qué estás viendo ahora") == {"text": ""}
