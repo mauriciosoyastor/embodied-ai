@@ -660,3 +660,22 @@ def test_viendo_ahora_stale_calla(monkeypatch: pytest.MonkeyPatch) -> None:
     _sin_red(monkeypatch)
     _fijar_percepcion(monkeypatch, _atributos(), 5000)
     assert _preguntar("qué estás viendo ahora") == {"text": ""}
+
+
+def test_saludo_fresco_describe_camara(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Captura: "hola" con cámara activa (age 313ms) no invita a iniciarla:
+    # saluda describiendo lo que ve (determinista S3, sin LLM).
+    _fijar_percepcion(monkeypatch, _atributos(), 313)
+    text = _preguntar("hola")["text"]
+    assert text == "¡Hola! Te escucho. Veo 1 objeto: persona naranja grande."
+    _sin_veto(text)
+
+
+def test_saludo_stale_invita_camara(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sin cámara el saludo mantiene la invitación exacta (sin afirmar visión).
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    text = _preguntar("hola, ¿cómo estás?")["text"]
+    assert text == "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+    _sin_veto(text)

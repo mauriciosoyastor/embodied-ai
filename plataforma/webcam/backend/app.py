@@ -406,7 +406,20 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados (con o
     # sin historial), y ese eco realimenta el historial ("repite lo mismo").
     # El saludo tampoco afirma visión: responde determinista sin LLM.
+    # Con cámara activa (snapshot fresco) saluda describiendo lo que ve en
+    # vez de invitar a iniciarla (captura: saludo con age 313ms fresco).
     if es_saludo and not es_visual:
+        if last_atributos:
+            _n_sal = len(last_atributos)
+            _descs_sal = ", ".join(
+                f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"
+                for a in last_atributos[:4]
+            )
+            return {
+                "text": strip_grounding_leak(
+                    f"¡Hola! Te escucho. Veo {_n_sal} objeto{'s' if _n_sal != 1 else ''}: {_descs_sal}."  # noqa: E501
+                )
+            }
         return {
             "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
         }
