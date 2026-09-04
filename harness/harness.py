@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -427,20 +428,35 @@ def ensure_fresh_pdg(timeout_s: int = 120) -> dict:
             pass
 
 
+def _run_detect_cli(extra: list[str] | None = None):
+    """Una invocación CLI detect-changes (extra añade flags como --repo)."""
+    return subprocess.run(
+        ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"]
+        + (extra or []),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=str(REPO_ROOT),
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
 def run_detect_changes() -> dict:
     """Sensor GitNexus detect_changes — si falla, retorna low (no bloquea)."""
     try:
         # intenta CLI GitNexus; si no está índice o falla, no bloquea
-        proc = subprocess.run(
-            ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            cwd=str(REPO_ROOT),
-            encoding="utf-8",
-            errors="replace",
-        )
+        proc = _run_detect_cli()
         out = (proc.stdout or "") + (proc.stderr or "")
+        # Multi-repo en la máquina: el CLI exige --repo. Reintento dirigido
+        # por env GITNEXUS_REPO (default "embodied-ai", ver caso 2026-09-04:
+        # "Multiple repositories indexed ... embodied-ai, ModoOps, ...").
+        # Nota: el CLI solo ve cambios trackeados; untracked los cubre la
+        # política de artefactos (lección 0004), no este gate.
+        if proc.returncode != 0 and "Multiple repositories indexed" in out:
+            repo = os.environ.get("GITNEXUS_REPO", "embodied-ai")
+            proc = _run_detect_cli(["--repo", repo])
+            out = (proc.stdout or "") + (proc.stderr or "")
         # Heurística estricta: solo HIGH/UNKNOWN como veredicto de riesgo,
         # nunca errores de infra CLI ("unknown option", "usage:", exit!=0).
         # Caso falso positivo 2026-09-03 run 0a7b6a8f: "unknown option '--json'"

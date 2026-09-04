@@ -69,6 +69,25 @@ def test_run_detect_changes_unknown_option_no_falso_high() -> None:
     assert res["infra_error"] is True
 
 
+def test_run_detect_changes_multi_repo_reintenta_con_repo() -> None:
+    """Caso 2026-09-04: multi-repo exige --repo; reintento resuelve a low."""
+    multi = MagicMock()
+    multi.stdout = ""
+    multi.stderr = "Multiple repositories indexed. Available: embodied-ai"
+    multi.returncode = 1
+    clean = MagicMock()
+    clean.stdout = "No changes detected."
+    clean.stderr = ""
+    clean.returncode = 0
+    with patch("harness.harness.subprocess.run") as run:
+        run.side_effect = [multi, clean]
+        res = run_detect_changes()
+    assert res["high"] is False
+    assert res["unknown"] is False
+    assert run.call_count == 2
+    assert "--repo" in run.call_args[0][0]
+
+
 def test_build_evidence_infra_no_marca_high() -> None:
     with patch(
         "harness.harness.run_detect_changes",
