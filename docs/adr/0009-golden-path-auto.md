@@ -33,8 +33,9 @@ huella afuera lo decide el humano. Sin `--auto`, rige el modo paso a paso.
   `AGENTS.md` y human-gate; un corte mal publicado contamina el tracker.
 - **Hook `post-merge` para limpieza**: descartado — `.git/hooks/` no se
   versiona, corre en cada `pull` aunque no toque golden-path.
-- **`/golden-path sync` bajo demanda**: adoptado a futuro, solo si se crea el
-  layout `.opencode/issues/active|archive/` (hoy no existe); fuera de este ADR.
+- **`/golden-path sync` bajo demanda**: adoptado a futuro; el layout
+  `.opencode/issues/active|archive/` ya existe como espejo local gitignorado
+  (ver `.opencode/issues/README.md`); fuera de este ADR.
 
 **Consequences**:
 - `/golden-path` sin flags no cambia (6 gates). `--auto` reduce a 1 decisión.
