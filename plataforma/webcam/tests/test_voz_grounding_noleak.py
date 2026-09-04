@@ -635,3 +635,49 @@ def test_visual_stale_silencia_aunque_haya_llm(
     monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
     assert _preguntar("¿qué ves?") == {"text": ""}
     assert _preguntar("¿hay alguien ahí?") == {"text": ""}
+
+
+def test_saludo_no_toca_vlm_ni_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regresión CI: "cómo estás" sale por fast-path determinista (200
+    # equivalente) sin ejecutar VLM ni LLM aunque estén mockeados.
+    from plataforma.webcam.backend import app as app_mod
+
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    def _boom(*a: Any, **k: Any) -> Any:
+        raise AssertionError("VLM no debe ejecutarse en fast-path")
+
+    monkeypatch.setattr(app_mod, "get_vlm_client", _boom, raising=False)
+    text = _preguntar("hola, ¿cómo estás?")["text"]
+    assert text == "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+
+
+def test_meta_modelo_responde_estado_sin_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Reporte captura: "hay algún modelo..." responde estado de
+    # proveedores sin cámara, sin LLM y sin "No veo objetos".
+    from plataforma.webcam.backend.app import _texto_estado_modelo
+
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    text = _preguntar("hay algún modelo de llm que esté funcionando")["text"]
+    assert "No veo" not in text
+    assert text == _texto_estado_modelo()
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    assert "Groq" in _preguntar("¿qué modelo sos?")["text"]
+
+
+def test_ollama_solo_texto() -> None:
+    # Bloqueo multimodal: a Ollama (qwen solo-texto) jamás va imagen/base64.
+    from plataforma.webcam.backend.app import _solo_texto
+
+    msgs = [
+        {"role": "system", "content": "sos asistente"},
+        {"role": "user", "content": [{"type": "image_url", "url": "data:xxxx"}]},  # type: ignore[dict-item]
+        {"role": "user", "content": "hola"},
+    ]
+    limpio = _solo_texto(msgs)  # type: ignore[arg-type]
+    assert all(isinstance(m["content"], str) for m in limpio)
+    assert [m["content"] for m in limpio] == ["sos asistente", "hola"]

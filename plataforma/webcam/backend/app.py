@@ -6,6 +6,7 @@ Lifespan lazy: inicializa YOLO+MediaPipe si models presentes, loguea si stub.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -140,6 +141,43 @@ def strip_grounding_leak(text: str) -> str:
     cleaned = _LEAK_RE.sub("", text)
     cleaned = _EMPTY_PARENS_RE.sub("", cleaned)
     return _SPACES_RE.sub(" ", cleaned).strip()
+
+
+def _texto_estado_modelo() -> str:
+    """Estado free-tier sin red: qué LLM/VLM responde voz y visión.
+
+    Solo lee env (nunca dialea): Groq vivo con key, HF de respaldo,
+    Ollama local si el daemon corre. No afirma visión.
+    """
+    groq = bool(os.getenv("GROQ_API_KEY", "").strip())
+    hf = bool(os.getenv("HF_TOKEN", "").strip())
+    voz = "Groq llama-3.1-8b-instant" if groq else "mock local (falta GROQ_API_KEY)"
+    if groq:
+        vision = "Groq llama-4-scout"
+    elif hf:
+        vision = "HF Qwen2.5-VL"
+    else:
+        vision = "pausada (sin keys)"
+    return (
+        f"Hablo con {voz} para voz y {vision} para visión, todo free-tier. "
+        "Ollama local queda de respaldo si está corriendo."
+    )
+
+
+def _solo_texto(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Bloqueo multimodal: a Ollama (modelos solo-texto) solo va str.
+
+    Descarta turnos con content no-str (image_url/base64) en vez de
+    fallar en parsing o quemar memoria del daemon local.
+    """
+    limpios: list[dict[str, str]] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str) and content.strip():
+            limpios.append({"role": str(m.get("role", "user")), "content": content})
+    return limpios
 
 
 @asynccontextmanager
@@ -284,6 +322,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     es_saludo = _es_saludo(prompt)
     es_charla = _es_charla(prompt)
     es_visual = _es_pregunta_visual(prompt)
+    es_meta = _es_meta_modelo(prompt)
+    # Meta-modelo ("qué modelo sos"): estado determinista sin cámara ni
+    # LLM — nunca afirma visión, así que va antes del gate G1/G3.
+    if es_meta:
+        return {"text": _texto_estado_modelo()}
     snapshot = _fresh_snapshot()
     if snapshot is None and es_visual and not es_charla:
         return {"text": ""}
@@ -550,9 +593,10 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         from openai import OpenAI
 
         _ollama = OpenAI(api_key="ollama", base_url=ollama_base)
+        msgs_texto = _solo_texto(_messages)  # bloqueo multimodal: solo str
         _resp = _ollama.chat.completions.create(
             model=ollama_model,
-            messages=_messages,  # type: ignore[arg-type]
+            messages=msgs_texto,  # type: ignore[arg-type]
             timeout=10,
             temperature=0.6,
             max_tokens=150,
