@@ -399,6 +399,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # Acuse conversacional: respuesta determinista SIN pasar por el LLM.
     # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados (con o
     # sin historial), y ese eco realimenta el historial ("repite lo mismo").
+    # El saludo tampoco afirma visión: responde determinista sin LLM.
+    if es_saludo and not es_visual:
+        return {
+            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        }
     if es_charla:
         return {"text": "Entendido, te sigo escuchando."}
 

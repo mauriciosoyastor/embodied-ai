@@ -149,6 +149,43 @@ def test_stale_saludo_responde_sin_vision(monkeypatch: pytest.MonkeyPatch) -> No
     _sin_veto(text)
 
 
+def test_saludo_con_llm_no_niega_objetos(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regresión captura: "cómo estás" con LLM disponible (Ollama vivo) no debe
+    # negar visión. El saludo responde determinista sin pasar por el LLM.
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+
+    class _Msg:
+        content = "No veo objetos ahora."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    text = _preguntar("cómo estás")["text"]
+    assert "No veo objetos" not in text
+    assert text.startswith("¡Hola!")
+    _sin_veto(text)
+
+
 def test_edad_captura_ahora_responde(monkeypatch: pytest.MonkeyPatch) -> None:
     # age 684ms (captura real CPU ~800ms/infer): con TTL 2000ms es fresca.
     _fijar_percepcion(monkeypatch, _atributos(), 684)
