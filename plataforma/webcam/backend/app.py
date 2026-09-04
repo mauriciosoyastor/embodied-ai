@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -178,6 +179,47 @@ def _solo_texto(
         if isinstance(content, str) and content.strip():
             limpios.append({"role": str(m.get("role", "user")), "content": content})
     return limpios
+
+
+# Ruta dedicada /voz en Groq: volumen alto (14400 RPD free-tier).
+_VOZ_GROQ_MODEL = "llama-3.1-8b-instant"
+
+# OFFLINE_MODE: si Groq decae N fallos seguidos, se skipea la nube por
+# cooldown y todo va a Ollama local con un aviso por voz (una vez).
+_OFFLINE_UMBRAL = 3
+_OFFLINE_COOLDOWN_MS = 120_000
+_OFFLINE = {"fallos": 0, "hasta_ms": 0, "avisado": False}
+
+
+def _groq_disponible() -> bool:
+    return int(time.time() * 1000) >= int(_OFFLINE["hasta_ms"])
+
+
+def _registrar_fallo_groq() -> None:
+    _OFFLINE["fallos"] = int(_OFFLINE["fallos"]) + 1
+    if int(_OFFLINE["fallos"]) >= _OFFLINE_UMBRAL:
+        _OFFLINE["hasta_ms"] = int(time.time() * 1000) + _OFFLINE_COOLDOWN_MS
+        _OFFLINE["avisado"] = False
+
+
+def _registrar_ok_groq() -> None:
+    _OFFLINE["fallos"] = 0
+    _OFFLINE["hasta_ms"] = 0
+    _OFFLINE["avisado"] = True
+
+
+def _reset_offline() -> None:
+    _OFFLINE["fallos"] = 0
+    _OFFLINE["hasta_ms"] = 0
+    _OFFLINE["avisado"] = True
+
+
+def _prefijo_offline() -> str:
+    """Aviso por voz una vez por ventana cuando la nube está skipeada."""
+    if _groq_disponible() or bool(_OFFLINE["avisado"]):
+        return ""
+    _OFFLINE["avisado"] = True
+    return "Sin nube (modo local). "
 
 
 @asynccontextmanager
@@ -611,19 +653,21 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         )
         _txt = (_resp.choices[0].message.content or "").strip()
         if _txt:
-            return {"text": strip_grounding_leak(_txt)}
+            return {"text": strip_grounding_leak(_prefijo_offline() + _txt)}
     except Exception as e:
         logger.warning("Ollama fallo: %s", e)
 
-    # 1) Groq secundario (antes primario Ticket 021) — grounded
-    if has_groq:
+    # 1) Groq ruta dedicada /voz (skipeado en OFFLINE_MODE) — grounded
+    if has_groq and _groq_disponible():
         try:
-            modelo = os.getenv("GROQ_MODEL", "").strip() or gemini_client.MODELO_DEFECTO
+            modelo = os.getenv("GROQ_MODEL", "").strip() or _VOZ_GROQ_MODEL
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
+                _registrar_ok_groq()
                 return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Groq fallo: %s", e)
+            _registrar_fallo_groq()
 
     # 2) Secundario HF Router (si GROQ 429/500)
     if has_hf:
