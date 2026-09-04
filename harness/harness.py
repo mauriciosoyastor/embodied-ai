@@ -71,6 +71,8 @@ REPO_ROOT = ROOT.parent
 TRAJECTORY = ROOT / "trajectory.jsonl"
 SENSOR_LOG_DIR = ROOT / "sensor_logs"
 OUTPUT_DIR = ROOT / "output"
+GITNEXUS_META = REPO_ROOT / ".gitnexus" / "meta.json"
+GITNEXUS_LOCK = REPO_ROOT / ".gitnexus" / ".analyze.lock"
 
 
 @dataclass
@@ -296,6 +298,135 @@ def run_mypy(run_id: str) -> dict:
         return {"tool": "mypy", "ok": None, "skipped": True, "reason": str(e)}
 
 
+def _git_head() -> str | None:
+    """HEAD local (<1s). None si git no disponible."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        head = (proc.stdout or "").strip()
+        return head if proc.returncode == 0 and head else None
+    except Exception:
+        return None
+
+
+def _index_last_commit() -> str | None:
+    """lastCommit del índice (.gitnexus/meta.json). None si ausente/ilegible."""
+    try:
+        data = json.loads(GITNEXUS_META.read_text(encoding="utf-8"))
+        last = data.get("lastCommit")
+        return last if isinstance(last, str) and last else None
+    except Exception:
+        return None
+
+
+def _commits_behind(head: str, base: str) -> int | None:
+    """Nº commits HEAD no indexados. None si incomparable (historial reescrito)."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-list", "--count", f"{base}..{head}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        return int((proc.stdout or "").strip()) if proc.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def ensure_fresh_pdg(timeout_s: int = 120) -> dict:
+    """Guardián PDG fail-open: reindexa solo si stale (Capa 1-bis).
+
+    Barato en verde (2 lecturas + 2 git <1s, 0s reindex).
+    Nunca bloquea: fallos/timeout/lock concurrente → fresh=False + infra,
+    que build_evidence surfacea como uncovered (medium), jamás high.
+    """
+    head = _git_head()
+    last = _index_last_commit()
+    if head is not None and last is not None and head == last:
+        return {"fresh": True, "behind": 0, "reindexed": False, "infra": None}
+    behind = (
+        _commits_behind(head, last) if head is not None and last is not None else None
+    )
+    if behind == 0:
+        return {"fresh": True, "behind": 0, "reindexed": False, "infra": None}
+    # Lock anti-apilamiento: otro analyze en curso → no duplicar, reportar infra.
+    try:
+        if GITNEXUS_LOCK.exists():
+            age = time.time() - GITNEXUS_LOCK.stat().st_mtime
+            if age < timeout_s:
+                return {
+                    "fresh": False,
+                    "behind": behind,
+                    "reindexed": False,
+                    "infra": "analyze concurrente en curso (lock)",
+                }
+    except Exception:
+        pass
+    try:
+        GITNEXUS_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        GITNEXUS_LOCK.write_text(str(time.time()), encoding="utf-8")
+    except Exception as e:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"lock no escribible: {e}",
+        }
+    try:
+        proc = subprocess.run(
+            ["node", ".gitnexus/run.cjs", "analyze", "--index-only", "--pdg"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            return {
+                "fresh": True,
+                "behind": behind,
+                "reindexed": True,
+                "infra": None,
+            }
+        out = ((proc.stdout or "") + (proc.stderr or ""))[:200]
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze exit={proc.returncode}: {out}",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze timeout {timeout_s}s",
+        }
+    except Exception as e:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze skip: {e}",
+        }
+    finally:
+        try:
+            GITNEXUS_LOCK.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def run_detect_changes() -> dict:
     """Sensor GitNexus detect_changes — si falla, retorna low (no bloquea)."""
     try:
@@ -474,6 +605,10 @@ def domain_assertions() -> dict:
 
 def build_evidence(run_id: str) -> tuple[EvidenceBundle, str]:
     ev = EvidenceBundle()
+    # Guardián PDG (Capa 1-bis): índice fresco antes de sensores; fail-open.
+    pdg = ensure_fresh_pdg()
+    if not pdg.get("fresh"):
+        ev.uncovered.append(f"pdg stale: {pdg.get('infra') or pdg.get('behind')}")
     py_res, py_log = run_pytest(run_id)
     ev.tests_run.append("pytest")
     if py_res.get("skipped"):
