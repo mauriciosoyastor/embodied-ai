@@ -21,6 +21,10 @@ _total_samples: list[float] = []
 _fps_samples: list[float] = []
 _dropped_frames_total: int = 0
 _start_ms: int = int(time.time() * 1000)
+# Voz: fast-path determinista (intent) vs slow-path LLM/VLM (proveedor).
+_voz_fast: Counter[str] = Counter()
+_voz_slow: Counter[str] = Counter()
+_voz_offline: int = 0
 
 
 def record_cache_hit() -> None:
@@ -76,6 +80,22 @@ def record_fps(fps: float) -> None:
 def record_dropped_frame(n: int = 1) -> None:
     global _dropped_frames_total
     _dropped_frames_total += int(n)
+
+
+def record_voz_fast(intent: str) -> None:
+    """Un turno resuelto sin LLM (0ms, 0 tokens): saludo/meta/charla/s3/g3."""
+    _voz_fast[str(intent)] += 1
+
+
+def record_voz_slow(proveedor: str) -> None:
+    """Un turno que llegó a la cadena LLM/VLM (latencia + tokens)."""
+    _voz_slow[str(proveedor)] += 1
+
+
+def record_offline(activo: bool) -> None:
+    """1 si Groq está skipeado (OFFLINE_MODE), 0 si la nube responde."""
+    global _voz_offline
+    _voz_offline = 1 if activo else 0
 
 
 def _p50(vals: list[float]) -> float:
@@ -151,15 +171,43 @@ def render_prometheus() -> str:
     lines.append("# HELP dropped_frames_total LeakyQueue drops")
     lines.append("# TYPE dropped_frames_total counter")
     lines.append(f"dropped_frames_total {_dropped_frames_total}")
+    lines.append("# HELP voz_fast_path_total Turnos voz sin LLM por intencion")
+    lines.append("# TYPE voz_fast_path_total counter")
+    for intent in ("saludo", "charla", "meta", "s3_atributos", "g3_silencio"):
+        lines.append(f'voz_fast_path_total{{intent="{intent}"}} {_voz_fast[intent]}')
+    for intent, cnt in _voz_fast.items():
+        if intent not in ("saludo", "charla", "meta", "s3_atributos", "g3_silencio"):
+            lines.append(f'voz_fast_path_total{{intent="{intent}"}} {cnt}')
+    lines.append("# HELP voz_slow_path_total Turnos voz via LLM/VLM por proveedor")
+    lines.append("# TYPE voz_slow_path_total counter")
+    for prov in ("ollama", "groq", "groq-fallback", "hf", "gemini", "openai", "mock"):
+        lines.append(f'voz_slow_path_total{{proveedor="{prov}"}} {_voz_slow[prov]}')
+    for prov, cnt in _voz_slow.items():
+        if prov not in (
+            "ollama",
+            "groq",
+            "groq-fallback",
+            "hf",
+            "gemini",
+            "openai",
+            "mock",
+        ):
+            lines.append(f'voz_slow_path_total{{proveedor="{prov}"}} {cnt}')
+    lines.append("# HELP voz_offline_mode 1 si Groq skipeado (OFFLINE_MODE)")
+    lines.append("# TYPE voz_offline_mode gauge")
+    lines.append(f"voz_offline_mode {_voz_offline}")
     lines.append(f"uptime_ms {int(time.time() * 1000 - _start_ms)}")
     return "\n".join(lines) + "\n"
 
 
 def reset() -> None:
-    global _cache_hits, _cache_misses, _dropped_frames_total
+    global _cache_hits, _cache_misses, _dropped_frames_total, _voz_offline
     _cache_hits = 0
     _cache_misses = 0
     _dropped_frames_total = 0
+    _voz_offline = 0
+    _voz_fast.clear()
+    _voz_slow.clear()
     _ttl_expirations.clear()
     _glass_samples.clear()
     _yolo_samples.clear()

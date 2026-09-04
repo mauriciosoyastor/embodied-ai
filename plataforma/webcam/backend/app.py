@@ -25,7 +25,12 @@ from plataforma.webcam.backend.intent_router import (
     _es_pregunta_visual,
     _es_saludo,
 )
-from plataforma.webcam.backend.metrics import render_prometheus
+from plataforma.webcam.backend.metrics import (
+    record_offline,
+    record_voz_fast,
+    record_voz_slow,
+    render_prometheus,
+)
 from plataforma.webcam.backend.ws import perception_ws_handler
 
 logger = logging.getLogger(__name__)
@@ -195,23 +200,36 @@ def _groq_disponible() -> bool:
     return int(time.time() * 1000) >= int(_OFFLINE["hasta_ms"])
 
 
+def _respuesta_rapida(intent: str, text: str) -> dict[str, str]:
+    """Fast-path voz: cuenta la intención y devuelve texto saneo.
+
+    Separa el tráfico 0ms/0-tokens (saludo/meta/charla/s3/g3) del
+    slow-path LLM/VLM para el ratio en GET /metrics.
+    """
+    record_voz_fast(intent)
+    return {"text": strip_grounding_leak(text)}
+
+
 def _registrar_fallo_groq() -> None:
     _OFFLINE["fallos"] = int(_OFFLINE["fallos"]) + 1
     if int(_OFFLINE["fallos"]) >= _OFFLINE_UMBRAL:
         _OFFLINE["hasta_ms"] = int(time.time() * 1000) + _OFFLINE_COOLDOWN_MS
         _OFFLINE["avisado"] = False
+    record_offline(not _groq_disponible())
 
 
 def _registrar_ok_groq() -> None:
     _OFFLINE["fallos"] = 0
     _OFFLINE["hasta_ms"] = 0
     _OFFLINE["avisado"] = True
+    record_offline(False)
 
 
 def _reset_offline() -> None:
     _OFFLINE["fallos"] = 0
     _OFFLINE["hasta_ms"] = 0
     _OFFLINE["avisado"] = True
+    record_offline(False)
 
 
 def _prefijo_offline() -> str:
@@ -368,10 +386,10 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # Meta-modelo ("qué modelo sos"): estado determinista sin cámara ni
     # LLM — nunca afirma visión, así que va antes del gate G1/G3.
     if es_meta:
-        return {"text": _texto_estado_modelo()}
+        return _respuesta_rapida("meta", _texto_estado_modelo())
     snapshot = _fresh_snapshot()
     if snapshot is None and es_visual and not es_charla:
-        return {"text": ""}
+        return _respuesta_rapida("g3_silencio", "")
     if snapshot is None:
         last_atributos: list[dict[str, Any]] = []
         last_frame_id, _age = 0, 0
@@ -383,11 +401,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # sin historial), y ese eco realimenta el historial ("repite lo mismo").
     # El saludo tampoco afirma visión: responde determinista sin LLM.
     if es_saludo and not es_visual:
-        return {
-            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
-        }
+        return _respuesta_rapida(
+            "saludo", "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        )
     if es_charla:
-        return {"text": "Entendido, te sigo escuchando."}
+        return _respuesta_rapida("charla", "Entendido, te sigo escuchando.")
 
     # Grounding previo backend-only: inyectar Percepción viva a TODO prompt
     # CON visión fresca. Sin snapshot (solo saludo) el prompt va pelado para
@@ -469,22 +487,22 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         None,
                     )
                     if target is None:
-                        return {"text": strip_grounding_leak("No veo personas ahora.")}
+                        return _respuesta_rapida(
+                            "s3_atributos", "No veo personas ahora."
+                        )
                     persons = [a for a in last_atributos if a.get("cls") == "person"]
                     if "cuánt" in low_q or "cuant" in low_q:
                         n_p = len(persons)
-                        return {
-                            "text": strip_grounding_leak(
-                                f"Veo {n_p} persona{'s' if n_p != 1 else ''}."
-                            )
-                        }
+                        return _respuesta_rapida(
+                            "s3_atributos",
+                            f"Veo {n_p} persona{'s' if n_p != 1 else ''}.",
+                        )
                     n_persons = len(persons)
                     plural_p = "s" if n_persons != 1 else ""
-                    return {
-                        "text": strip_grounding_leak(
-                            f"Sí, hay {n_persons} persona{plural_p} en cámara."
-                        )
-                    }
+                    return _respuesta_rapida(
+                        "s3_atributos",
+                        f"Sí, hay {n_persons} persona{plural_p} en cámara.",
+                    )
                 # relaciones espaciales: izquierda/derecha por centroide
                 if "izquierda" in low_q or "derecha" in low_q and "taza" in low_q:
                     sorted_at = sorted(
@@ -508,24 +526,21 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         ]
                         if "izquierda" in low_q and left:
                             a = left[-1]
-                            return {
-                                "text": strip_grounding_leak(
-                                    f"A la izquierda de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
-                                )
-                            }
+                            return _respuesta_rapida(
+                                "s3_atributos",
+                                f"A la izquierda de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}.",  # noqa: E501
+                            )
                         if "derecha" in low_q and right:
                             a = right[0]
-                            return {
-                                "text": strip_grounding_leak(
-                                    f"A la derecha de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}."  # noqa: E501
-                                )
-                            }
+                            return _respuesta_rapida(
+                                "s3_atributos",
+                                f"A la derecha de la taza está {_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}.",  # noqa: E501
+                            )
                 if target and "color" in low_q:
-                    return {
-                        "text": strip_grounding_leak(
-                            f"La {_cls_es(str(target.get('cls')))} es {target.get('color')} tamaño {target.get('tamano')}."  # noqa: E501
-                        )
-                    }
+                    return _respuesta_rapida(
+                        "s3_atributos",
+                        f"La {_cls_es(str(target.get('cls')))} es {target.get('color')} tamaño {target.get('tamano')}.",  # noqa: E501
+                    )
                 if (
                     "qué ves" in low_q
                     or "que ves" in low_q
@@ -541,17 +556,15 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                         ]
                     )
                     n = len(last_atributos)
-                    return {
-                        "text": strip_grounding_leak(
-                            f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}."  # noqa: E501
-                        )
-                    }
+                    return _respuesta_rapida(
+                        "s3_atributos",
+                        f"Veo {n} objeto{'s' if n != 1 else ''}: {descs}.",  # noqa: E501
+                    )
                 if target:
-                    return {
-                        "text": strip_grounding_leak(
-                            f"Veo {_cls_es(str(target.get('cls')))} {target.get('color')} {target.get('tamano')}."  # noqa: E501
-                        )
-                    }
+                    return _respuesta_rapida(
+                        "s3_atributos",
+                        f"Veo {_cls_es(str(target.get('cls')))} {target.get('color')} {target.get('tamano')}.",  # noqa: E501
+                    )
     except Exception:
         pass
     # S3 dynamic PromptList: FIX — fuera de is_color_q para que "mira/busca/dónde está" dispare siempre si DYNAMIC=True  # noqa: E501
@@ -573,9 +586,9 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     k in low2
                     for k in ["mira", "mirá", "busca", "buscá", "dónde", "donde"]
                 ):  # noqa: E501
-                    return {
-                        "text": strip_grounding_leak(f"Buscando {', '.join(prompts)}.")
-                    }
+                    return _respuesta_rapida(
+                        "s3_promptlist", f"Buscando {', '.join(prompts)}."
+                    )
     except Exception:
         pass
     import os
@@ -653,6 +666,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
         )
         _txt = (_resp.choices[0].message.content or "").strip()
         if _txt:
+            record_voz_slow("ollama")
             return {"text": strip_grounding_leak(_prefijo_offline() + _txt)}
     except Exception as e:
         logger.warning("Ollama fallo: %s", e)
@@ -664,6 +678,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
             if text.strip():
                 _registrar_ok_groq()
+                record_voz_slow("groq")
                 return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Groq fallo: %s", e)
@@ -685,6 +700,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     prompt_grounded, modelo="meta-llama/Llama-3.2-3B-Instruct"
                 )
                 if text.strip():
+                    record_voz_slow("hf")
                     return {"text": strip_grounding_leak(text)}
             finally:
                 if orig_base:
@@ -702,6 +718,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 or gemini_client.MODELO_GEMINI_LEGACY
             )
             text = gemini_client.responder(prompt_grounded, modelo=modelo)
+            record_voz_slow("gemini")
             return {"text": strip_grounding_leak(text)}
         except Exception as e:
             logger.warning("Gemini fallo: %s", e)
@@ -724,6 +741,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             )
             txt = (resp.choices[0].message.content or "").strip()
             if txt:
+                record_voz_slow("openai")
                 return {"text": strip_grounding_leak(txt)}
         except Exception as e:
             logger.warning("OpenAI fallback fallo: %s", e)
@@ -734,9 +752,9 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # Excepción: saludo — no afirma visión, así que responde determinista
     # en vez de callar (conversación fluida sin cámara ni keys).
     if es_saludo:
-        return {
-            "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
-        }
+        return _respuesta_rapida(
+            "saludo", "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
+        )
     # Fragmento/pregunta no clasificada CON visión fresca: describir lo que
     # se ve en vez de callar (el STT continuo suele entregar fragmentos como
     # "qué" de "qué ves"). G3 intacto: solo afirma datos frescos reales.
@@ -746,12 +764,11 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
             f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"
             for a in last_atributos[:4]
         )
-        return {
-            "text": strip_grounding_leak(
-                f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}."
-            )
-        }
-    return {"text": ""}
+        return _respuesta_rapida(
+            "s3_atributos",
+            f"Veo {_n} objeto{'s' if _n != 1 else ''}: {_descs}.",
+        )
+    return _respuesta_rapida("g3_silencio", "")
 
 
 class VisionCaptionRequest(BaseModel):
@@ -770,6 +787,7 @@ async def vision_caption(req: VisionCaptionRequest) -> dict[str, object]:
         leyenda = client.caption(
             image_b64=req.jpeg_b64, frame_id=req.frame_id, objects=req.objects
         )
+        record_voz_slow(str(leyenda.provider))
         return {
             "frame_id": leyenda.frame_id,
             "caption": leyenda.caption,
@@ -780,6 +798,7 @@ async def vision_caption(req: VisionCaptionRequest) -> dict[str, object]:
         }
     except Exception as exc:  # pragma: no cover
         logger.warning("vision/caption fallback mock: %s", exc)
+        record_voz_slow("mock")
         return {
             "frame_id": req.frame_id,
             "caption": "Escena vacia (mock)",
