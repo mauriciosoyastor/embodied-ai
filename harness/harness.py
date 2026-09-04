@@ -310,9 +310,39 @@ def run_detect_changes() -> dict:
             errors="replace",
         )
         out = (proc.stdout or "") + (proc.stderr or "")
-        # heurística simple: si out contiene HIGH/UNKNOWN (paréntesis explícitos para precedencia)
-        high = ("HIGH" in out) or ("high" in out.lower() and "risk" in out.lower())
-        unknown = ("UNKNOWN" in out) or ("unknown" in out.lower())
+        # Heurística estricta: solo HIGH/UNKNOWN como veredicto de riesgo,
+        # nunca errores de infra CLI ("unknown option", "usage:", exit!=0).
+        # Caso falso positivo 2026-09-03 run 0a7b6a8f: "unknown option '--json'"
+        # marcaba unknown=True → risk high sin riesgo real.
+        infra_error = bool(
+            re.search(
+                r"unknown option|unknown argument|usage:|no such option|"
+                r"could not launch|command not found",
+                out,
+                re.IGNORECASE,
+            )
+            or proc.returncode not in (0, None)
+            and not re.search(r"\b(HIGH|UNKNOWN)\b", out)
+        )
+        high = bool(
+            re.search(
+                r"risk[_ -]?level[\"'\s:=]+high\b|\brisk\s*[:=]\s*high\b|"
+                r"\bHIGH\s+(RISK|BLAST)\b",
+                out,
+                re.IGNORECASE,
+            )
+        )
+        unknown = bool(
+            re.search(
+                r"risk[_ -]?level[\"'\s:=]+unknown\b|\brisk\s*[:=]\s*unknown\b|"
+                r"\bUNKNOWN\s+(RISK|BLAST)\b",
+                out,
+                re.IGNORECASE,
+            )
+        )
+        if infra_error:
+            high = False
+            unknown = False
         # intenta parsear impacted_nodes si JSON
         impacted = 0
         changed = 0
@@ -328,6 +358,7 @@ def run_detect_changes() -> dict:
             "changed_lines": changed,
             "high": high,
             "unknown": unknown,
+            "infra_error": infra_error,
             "raw": out[:2000],
         }
     except Exception as e:
@@ -336,6 +367,7 @@ def run_detect_changes() -> dict:
             "changed_lines": 0,
             "high": False,
             "unknown": False,
+            "infra_error": True,
             "raw": f"skip: {e}",
         }
 
@@ -478,6 +510,8 @@ def build_evidence(run_id: str) -> tuple[EvidenceBundle, str]:
         ev.impact_ratio = float(ev.impacted_nodes) if ev.impacted_nodes else 0.0
     if dc.get("high") or dc.get("unknown"):
         ev.uncovered.append(f"detect_changes: {dc.get('raw', '')[:120]}")
+    elif dc.get("infra_error"):
+        ev.uncovered.append(f"detect_changes infra: {dc.get('raw', '')[:120]}")
     # Gate senior: impact_ratio >10 → needs-human-attention (04)
     if ev.impact_ratio is not None and ev.impact_ratio > 10:
         ev.uncovered.append(
