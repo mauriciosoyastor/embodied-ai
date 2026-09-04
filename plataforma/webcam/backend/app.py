@@ -89,6 +89,12 @@ _VISION_KEYWORDS = (
     "ves",
     "veo",
     "ven",
+    "viendo",
+    "viend",
+    "mirando",
+    "miran",
+    "observ",
+    "vist",
     "hay",
     "muest",
     "enseñ",
@@ -464,6 +470,12 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     "cuant",
                     "objeto",
                     "objetos",
+                    "viendo",
+                    "viend",
+                    "mirando",
+                    "miran",
+                    "observ",
+                    "vist",
                 ]
             )
             or is_persona_q
@@ -551,6 +563,12 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     or "que hay" in low_q
                     or "objeto" in low_q
                     or "objetos" in low_q
+                    or "viendo" in low_q
+                    or "viend" in low_q
+                    or "mirando" in low_q
+                    or "observ" in low_q
+                    or "qué estás" in low_q
+                    or "que estas" in low_q
                 ):
                     descs = ", ".join(
                         [
