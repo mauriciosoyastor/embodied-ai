@@ -24,7 +24,7 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
       - name: Typecheck
-        run: uv run mypy fase-0
+        run: uv run mypy plataforma/webcam
       - name: Tests
         run: uv run pytest
       - name: CONTEXT linter (ADR-0007)

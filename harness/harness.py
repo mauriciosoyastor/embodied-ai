@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -71,6 +72,8 @@ REPO_ROOT = ROOT.parent
 TRAJECTORY = ROOT / "trajectory.jsonl"
 SENSOR_LOG_DIR = ROOT / "sensor_logs"
 OUTPUT_DIR = ROOT / "output"
+GITNEXUS_META = REPO_ROOT / ".gitnexus" / "meta.json"
+GITNEXUS_LOCK = REPO_ROOT / ".gitnexus" / ".analyze.lock"
 
 
 @dataclass
@@ -296,23 +299,197 @@ def run_mypy(run_id: str) -> dict:
         return {"tool": "mypy", "ok": None, "skipped": True, "reason": str(e)}
 
 
-def run_detect_changes() -> dict:
-    """Sensor GitNexus detect_changes — si falla, retorna low (no bloquea)."""
+def _git_head() -> str | None:
+    """HEAD local (<1s). None si git no disponible."""
     try:
-        # intenta CLI GitNexus; si no está índice o falla, no bloquea
         proc = subprocess.run(
-            ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"],
+            ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=10,
             cwd=str(REPO_ROOT),
             encoding="utf-8",
             errors="replace",
         )
+        head = (proc.stdout or "").strip()
+        return head if proc.returncode == 0 and head else None
+    except Exception:
+        return None
+
+
+def _index_last_commit() -> str | None:
+    """lastCommit del índice (.gitnexus/meta.json). None si ausente/ilegible."""
+    try:
+        data = json.loads(GITNEXUS_META.read_text(encoding="utf-8"))
+        last = data.get("lastCommit")
+        return last if isinstance(last, str) and last else None
+    except Exception:
+        return None
+
+
+def _commits_behind(head: str, base: str) -> int | None:
+    """Nº commits HEAD no indexados. None si incomparable (historial reescrito)."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-list", "--count", f"{base}..{head}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        return int((proc.stdout or "").strip()) if proc.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def ensure_fresh_pdg(timeout_s: int = 120) -> dict:
+    """Guardián PDG fail-open: reindexa solo si stale (Capa 1-bis).
+
+    Barato en verde (2 lecturas + 2 git <1s, 0s reindex).
+    Nunca bloquea: fallos/timeout/lock concurrente → fresh=False + infra,
+    que build_evidence surfacea como uncovered (medium), jamás high.
+    """
+    head = _git_head()
+    last = _index_last_commit()
+    if head is not None and last is not None and head == last:
+        return {"fresh": True, "behind": 0, "reindexed": False, "infra": None}
+    behind = (
+        _commits_behind(head, last) if head is not None and last is not None else None
+    )
+    if behind == 0:
+        return {"fresh": True, "behind": 0, "reindexed": False, "infra": None}
+    # Lock anti-apilamiento: otro analyze en curso → no duplicar, reportar infra.
+    try:
+        if GITNEXUS_LOCK.exists():
+            age = time.time() - GITNEXUS_LOCK.stat().st_mtime
+            if age < timeout_s:
+                return {
+                    "fresh": False,
+                    "behind": behind,
+                    "reindexed": False,
+                    "infra": "analyze concurrente en curso (lock)",
+                }
+    except Exception:
+        pass
+    try:
+        GITNEXUS_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        GITNEXUS_LOCK.write_text(str(time.time()), encoding="utf-8")
+    except Exception as e:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"lock no escribible: {e}",
+        }
+    try:
+        proc = subprocess.run(
+            ["node", ".gitnexus/run.cjs", "analyze", "--index-only", "--pdg"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            cwd=str(REPO_ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            return {
+                "fresh": True,
+                "behind": behind,
+                "reindexed": True,
+                "infra": None,
+            }
+        out = ((proc.stdout or "") + (proc.stderr or ""))[:200]
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze exit={proc.returncode}: {out}",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze timeout {timeout_s}s",
+        }
+    except Exception as e:
+        return {
+            "fresh": False,
+            "behind": behind,
+            "reindexed": False,
+            "infra": f"analyze skip: {e}",
+        }
+    finally:
+        try:
+            GITNEXUS_LOCK.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _run_detect_cli(extra: list[str] | None = None):
+    """Una invocación CLI detect-changes (extra añade flags como --repo)."""
+    return subprocess.run(
+        ["node", ".gitnexus/run.cjs", "detect-changes", "--scope", "all"]
+        + (extra or []),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=str(REPO_ROOT),
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def run_detect_changes() -> dict:
+    """Sensor GitNexus detect_changes — si falla, retorna low (no bloquea)."""
+    try:
+        # intenta CLI GitNexus; si no está índice o falla, no bloquea
+        proc = _run_detect_cli()
         out = (proc.stdout or "") + (proc.stderr or "")
-        # heurística simple: si out contiene HIGH/UNKNOWN (paréntesis explícitos para precedencia)
-        high = ("HIGH" in out) or ("high" in out.lower() and "risk" in out.lower())
-        unknown = ("UNKNOWN" in out) or ("unknown" in out.lower())
+        # Multi-repo en la máquina: el CLI exige --repo. Reintento dirigido
+        # por env GITNEXUS_REPO (default "embodied-ai", ver caso 2026-09-04:
+        # "Multiple repositories indexed ... embodied-ai, ModoOps, ...").
+        # Nota: el CLI solo ve cambios trackeados; untracked los cubre la
+        # política de artefactos (lección 0004), no este gate.
+        if proc.returncode != 0 and "Multiple repositories indexed" in out:
+            repo = os.environ.get("GITNEXUS_REPO", "embodied-ai")
+            proc = _run_detect_cli(["--repo", repo])
+            out = (proc.stdout or "") + (proc.stderr or "")
+        # Heurística estricta: solo HIGH/UNKNOWN como veredicto de riesgo,
+        # nunca errores de infra CLI ("unknown option", "usage:", exit!=0).
+        # Caso falso positivo 2026-09-03 run 0a7b6a8f: "unknown option '--json'"
+        # marcaba unknown=True → risk high sin riesgo real.
+        infra_error = bool(
+            re.search(
+                r"unknown option|unknown argument|usage:|no such option|"
+                r"could not launch|command not found",
+                out,
+                re.IGNORECASE,
+            )
+            or proc.returncode not in (0, None)
+            and not re.search(r"\b(HIGH|UNKNOWN)\b", out)
+        )
+        high = bool(
+            re.search(
+                r"risk[_ -]?level[\"'\s:=]+high\b|\brisk\s*[:=]\s*high\b|"
+                r"\bHIGH\s+(RISK|BLAST)\b",
+                out,
+                re.IGNORECASE,
+            )
+        )
+        unknown = bool(
+            re.search(
+                r"risk[_ -]?level[\"'\s:=]+unknown\b|\brisk\s*[:=]\s*unknown\b|"
+                r"\bUNKNOWN\s+(RISK|BLAST)\b",
+                out,
+                re.IGNORECASE,
+            )
+        )
+        if infra_error:
+            high = False
+            unknown = False
         # intenta parsear impacted_nodes si JSON
         impacted = 0
         changed = 0
@@ -328,6 +505,7 @@ def run_detect_changes() -> dict:
             "changed_lines": changed,
             "high": high,
             "unknown": unknown,
+            "infra_error": infra_error,
             "raw": out[:2000],
         }
     except Exception as e:
@@ -336,6 +514,7 @@ def run_detect_changes() -> dict:
             "changed_lines": 0,
             "high": False,
             "unknown": False,
+            "infra_error": True,
             "raw": f"skip: {e}",
         }
 
@@ -442,6 +621,10 @@ def domain_assertions() -> dict:
 
 def build_evidence(run_id: str) -> tuple[EvidenceBundle, str]:
     ev = EvidenceBundle()
+    # Guardián PDG (Capa 1-bis): índice fresco antes de sensores; fail-open.
+    pdg = ensure_fresh_pdg()
+    if not pdg.get("fresh"):
+        ev.uncovered.append(f"pdg stale: {pdg.get('infra') or pdg.get('behind')}")
     py_res, py_log = run_pytest(run_id)
     ev.tests_run.append("pytest")
     if py_res.get("skipped"):
@@ -478,6 +661,8 @@ def build_evidence(run_id: str) -> tuple[EvidenceBundle, str]:
         ev.impact_ratio = float(ev.impacted_nodes) if ev.impacted_nodes else 0.0
     if dc.get("high") or dc.get("unknown"):
         ev.uncovered.append(f"detect_changes: {dc.get('raw', '')[:120]}")
+    elif dc.get("infra_error"):
+        ev.uncovered.append(f"detect_changes infra: {dc.get('raw', '')[:120]}")
     # Gate senior: impact_ratio >10 → needs-human-attention (04)
     if ev.impact_ratio is not None and ev.impact_ratio > 10:
         ev.uncovered.append(
@@ -651,6 +836,27 @@ def run_harness(
     print(f"[verify] bundle -> {sensor_log}")
     print(f"[verify] traza -> {TRAJECTORY}")
 
+    # Gobernanza Capa 2: riesgo high → gate humano real en traza.
+    # Medium sigue flujo normal (auto-repair N=3 vive en /golden-auto);
+    # solo high/impact_ratio>10 exigen aprobación antes del merge.
+    if evidence.risk == "high":
+        gate = HumanGate(needed=True, reason=evidence.risk_reason)
+        print(f"[human_gate] necesita humano: {gate.reason}")
+        print(f"[human_gate] aprobar con: --approve {run_id} --approver <nombre>")
+        append_trajectory(
+            TrajectoryEntry(
+                run_id=run_id,
+                ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                phase="human_gate",
+                tier=tier,
+                intent=intent,
+                verdict="needs-human",
+                files_touched=[],
+                human_gate=gate,
+                sensor_log=sensor_log,
+            )
+        )
+
     entry_done = TrajectoryEntry(
         run_id=run_id,
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -665,6 +871,56 @@ def run_harness(
     print(
         f"[done] run {run_id} {verdict} — inspeccionar: cat harness/trajectory.jsonl | jq . | grep {run_id} harness/trajectory.jsonl"
     )
+
+
+def review_gate(evidence: EvidenceBundle) -> dict:
+    """Gate local de revisión (Capa 3, mitad ejecutable del doble cierre).
+
+    La otra mitad (gitnexus-review blast-radius/taint + code-review
+    Standards/Spec) vive a nivel agente; ver docs/agents/review-checklist.md.
+    Veredictos: APPROVE (low limpio) | APPROVE_WITH_NOTES (medium) |
+    NEEDS-HUMAN (high, tests rotos o domain caído). Un solo fix-cycle.
+    """
+
+    reasons: list[str] = []
+    if evidence.tests_failed > 0:
+        reasons.append(f"tests_failed={evidence.tests_failed}")
+    if not evidence.domain_assertions.get("ok"):
+        reasons.append("domain assertions caídas")
+    if evidence.risk == "high":
+        reasons.append(evidence.risk_reason or "risk high")
+    if evidence.impact_ratio is not None and evidence.impact_ratio > 10:
+        reasons.append(f"impact_ratio {evidence.impact_ratio:.1f} >10")
+    if reasons:
+        return {"verdict": "NEEDS-HUMAN", "reasons": reasons}
+    if evidence.risk == "medium":
+        notes = evidence.uncovered[:3]
+        return {"verdict": "APPROVE_WITH_NOTES", "reasons": notes}
+    return {"verdict": "APPROVE", "reasons": []}
+
+
+def has_open_gate(run_id: str) -> bool:
+    """True si hay human_gate needed sin approve posterior (gate de merge).
+
+    El merge es humano por diseño (Golden Path paso 9); esta función es
+    el chequeo ejecutable previo: no mergear con gate abierto.
+    """
+    if not TRAJECTORY.exists():
+        return False
+    needed = False
+    for line in TRAJECTORY.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if rec.get("run_id") != run_id or rec.get("phase") != "human_gate":
+            continue
+        gate = rec.get("human_gate", {})
+        if gate.get("needed"):
+            needed = True
+        if gate.get("approved_by"):
+            needed = False
+    return needed
 
 
 def approve_gate(run_id: str, approver: str):

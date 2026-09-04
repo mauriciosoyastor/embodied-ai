@@ -21,9 +21,11 @@ def test_golden_path_configs_exist() -> None:
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "uv sync --all-packages" in ci
     assert (REPO / "CONTEXT.md").exists()
-    # linter doc no debe tener anclas efímeras en CONTEXT.md (ADR-0007)
-    context = (REPO / "CONTEXT.md").read_text(encoding="utf-8")
-    assert ".py:" not in context or "Golden Path" in context
+    # linter doc: sin anclas .py:NNN fuera de allowlist (ADR-0007).
+    # Sin cláusula OR débil: delega en harness/check_context.py.
+    from harness.check_context import check as check_context
+
+    assert check_context(REPO / "CONTEXT.md") == 0
 
 
 def test_prototypes_purged_no_artefactos_redundantes() -> None:

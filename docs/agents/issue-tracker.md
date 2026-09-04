@@ -20,6 +20,14 @@ Usadas por `/wayfinder`.
 - **Claim**: `gh issue edit N --add-assignee @me` antes de trabajar.
 - **Resolve**: comentario con `## Answer`, cerrar la issue (`gh issue close N`), y actualizar Decisions-so-far del mapa.
 
+## Espejo local (Capa 1, no fuente de verdad)
+
+GitHub sigue mandando. `.opencode/issues/` (gitignorado) es bandeja local:
+
+- `active/<numero>-<slug>.md` — ticket en curso con brief + `Blocked by` + rama `feat/<slug-ticket>`.
+- `archive/` — destino al cerrar (tras `## Answer` + close en GitHub).
+- Ramas: default `feat/<slug-ticket>` vinculada a ticket; spikes <1 sesión pueden usar rama libre anotándolo antes del merge. `main` y `agent/*` prohibidos para trabajo manual.
+
 ## Comandos útiles
 
 - Listar issues por label: `gh issue list --label "wayfinder:grilling"`

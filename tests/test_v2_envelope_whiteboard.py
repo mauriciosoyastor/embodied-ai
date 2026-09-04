@@ -73,8 +73,11 @@ class FakeWebSocket:
 # ---------------------------------------------------------------------------
 
 
-def test_yolo_whitelist_13_clases() -> None:
-    assert len(YOLO_WHITELIST) == 13
+def test_yolo_whitelist_w30() -> None:
+    # W30 curada (S1 mapa #88) — 13 base + 17 indoor, mismo yolo11n.onnx sin coste.
+    # Sincronizado con plataforma/webcam/tests/test_v2_envelope_whiteboard.py
+    # y config.YOLO_WHITELIST (fuente de verdad); el viejo 13 quedó obsoleto.
+    assert len(YOLO_WHITELIST) == 30
     assert "person" in YOLO_WHITELIST
     assert YOLO_WHITELIST == frozenset(
         {
@@ -91,6 +94,23 @@ def test_yolo_whitelist_13_clases() -> None:
             "backpack",
             "handbag",
             "remote",
+            "tv",
+            "bed",
+            "dining table",
+            "toilet",
+            "potted plant",
+            "microwave",
+            "oven",
+            "sink",
+            "refrigerator",
+            "clock",
+            "vase",
+            "toaster",
+            "wine glass",
+            "bowl",
+            "scissors",
+            "teddy bear",
+            "toothbrush",
         }
     )
 
