@@ -158,7 +158,22 @@ def _es_pregunta_visual(prompt: str) -> bool:
     low = prompt.lower()
     if any(k in low for k in _VISION_KEYWORDS):
         return True
+    if _es_deictico(low):
+        return True
     return any(k in low for k in _PERSONA_KEYWORDS)
+
+
+# Deícticos de lugar/objeto ("ahí", "esto"): con visión fresca piden
+# describir la escena; van por vía S3 sin pasar por el LLM (el SLM los
+# niega o confabula: "No veo objetos" / "personaje de color z:…").
+_DEICTICO_RE = re.compile(
+    r"\b(ah[ií]|ac[aá]|aqu[ií]|esto|eso|este|esta|ese|esa|estos|esos|estas|esas)\b"
+)
+
+
+def _es_deictico(low_q: str) -> bool:
+    """True si hay deíctico como palabra completa (no subcadena)."""
+    return _DEICTICO_RE.search(low_q) is not None
 
 
 # Clases COCO → es-AR para respuestas habladas (el detector habla inglés).
@@ -232,7 +247,8 @@ _LEAK_PATTERNS = (
     r"frame #\d+",
     r"age \d+ms",
     r"#[0-9a-fA-F]{3,8}\b",
-    r"\bz:\?",
+    # z:? literal + z con hex con/sin # ("z:c0392b" del loro llega sin #).
+    r"\bz:(?:\?|#?[0-9a-fA-F]{3,8})",
     r"\bWORLD:[^\s]*",
 )
 _LEAK_RE = re.compile("|".join(_LEAK_PATTERNS))
@@ -406,7 +422,20 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     # qwen1.5b alucina "No veo objetos ahora" ante acuses pelados (con o
     # sin historial), y ese eco realimenta el historial ("repite lo mismo").
     # El saludo tampoco afirma visión: responde determinista sin LLM.
+    # Con cámara activa (snapshot fresco) saluda describiendo lo que ve en
+    # vez de invitar a iniciarla (captura: saludo con age 313ms fresco).
     if es_saludo and not es_visual:
+        if last_atributos:
+            _n_sal = len(last_atributos)
+            _descs_sal = ", ".join(
+                f"{_cls_es(str(a.get('cls')))} {a.get('color')} {a.get('tamano')}"
+                for a in last_atributos[:4]
+            )
+            return {
+                "text": strip_grounding_leak(
+                    f"¡Hola! Te escucho. Veo {_n_sal} objeto{'s' if _n_sal != 1 else ''}: {_descs_sal}."  # noqa: E501
+                )
+            }
         return {
             "text": "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
         }
@@ -419,10 +448,12 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
     if snapshot is None:
         prompt_grounded = prompt
     else:
+        # Prefijo loro-proof: solo cls+color+tamano en palabras. Sin hex ni
+        # z: el SLM los repetía verbatim ("de color z:c0392b") y el strip no
+        # los alcanzaba sin #. El detalle fino sigue en AtributoVista/S3.
         _descs = ", ".join(
             [
-                f"{a.get('cls')} {a.get('color')} {a.get('tamano')} "
-                f"{a.get('color_hsv_hex', '')} z:{a.get('z_rel') or '?'}"
+                f"{a.get('cls')} {a.get('color')} {a.get('tamano')}"
                 f"{' WORLD:' + str(a.get('prompt_origen')) if a.get('is_world') else ''}"  # noqa: E501
                 for a in last_atributos[:4]
             ]
@@ -479,6 +510,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                 ]
             )
             or is_persona_q
+            or _es_deictico(low_q)
         )
         if is_color_q:
             # Gate G1/G3: la frescura ya quedó validada arriba (snapshot).
@@ -569,6 +601,7 @@ async def VozHandler(req: VozRequest) -> dict[str, str]:
                     or "observ" in low_q
                     or "qué estás" in low_q
                     or "que estas" in low_q
+                    or _es_deictico(low_q)
                 ):
                     descs = ", ".join(
                         [
