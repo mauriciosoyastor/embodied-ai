@@ -679,3 +679,83 @@ def test_saludo_stale_invita_camara(monkeypatch: pytest.MonkeyPatch) -> None:
     text = _preguntar("hola, ¿cómo estás?")["text"]
     assert text == "¡Hola! Te escucho. Si iniciás la cámara, te describo lo que ve."
     _sin_veto(text)
+
+
+def test_strip_z_sin_numeral() -> None:
+    # El loro emite "z:c0392b" sin #: igual debe salir de la UI.
+    from plataforma.webcam.backend.app import strip_grounding_leak
+
+    assert strip_grounding_leak("Un personaje rojo grande, de color z:c0392b.") == (
+        "Un personaje rojo grande, de color ."
+    )
+    assert "z:c0392b" not in strip_grounding_leak("a z:#c0392b b")
+    assert strip_grounding_leak("Veo 1 objeto: persona naranja grande.") == (
+        "Veo 1 objeto: persona naranja grande."
+    )
+
+
+def test_deictico_es_visual() -> None:
+    from plataforma.webcam.backend.app import _es_pregunta_visual
+
+    for p in ("ahí", "¿qué es esto?", "miralo acá", "ese de ahí"):
+        assert _es_pregunta_visual(p) is True
+    # Subcadenas inocentes no disparan (word boundary).
+    for p in ("te deseo suerte", "estoy molesto", "un beso", "qué estación es"):
+        assert _es_pregunta_visual(p) is False
+
+
+def test_deictico_fresco_describe(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "ahí" con visión fresca describe S3 en vez de ir al LLM (que negaba
+    # o confabulaba "personaje de color z:…").
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    text = _preguntar("ahí")["text"]
+    assert text == "Veo 1 objeto: persona naranja grande."
+    _sin_veto(text)
+
+
+def test_deictico_stale_calla(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sin_proveedores(monkeypatch)
+    _sin_red(monkeypatch)
+    _fijar_percepcion(monkeypatch, _atributos(), 5000)
+    assert _preguntar("ahí") == {"text": ""}
+    assert _preguntar("¿qué es esto?") == {"text": ""}
+
+
+def test_grounded_sin_hex_ni_z(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Prefijo loro-proof: el prompt al LLM no lleva hex ni z: para que no
+    # los repita verbatim.
+    _fijar_percepcion(monkeypatch, _atributos(), 100)
+    capturado: dict[str, Any] = {}
+
+    class _Msg:
+        content = "Seguimos charlando."
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Completions:
+        def create(self, *a: Any, **k: Any) -> Any:
+            capturado.update(k)
+            return _Resp()
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _OpenAI:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        @property
+        def chat(self) -> Any:
+            return _Chat()
+
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_OpenAI))
+    assert _preguntar("contame algo interesante")["text"] == "Seguimos charlando."
+    user = capturado["messages"][-1]["content"]
+    assert "#67e22" not in user
+    assert "z:" not in user
+    assert "person naranja grande" in user
