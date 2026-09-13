@@ -151,7 +151,7 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient, o
     <div id="enr-gallery" style="margin-top:10px"></div>
     <div style="margin-top:8px;display:flex;gap:8px">
       <button id="enr-clear" style="padding:4px 8px;border-radius:6px;border:1px solid #334155;background:transparent;color:#94a3b8;cursor:pointer;font-size:11px">Borrar todos</button>
-      <span style="margin-left:auto;font-size:11px;color:#64748b">thr cos ${COSINE_THRESHOLD} · ${embedder.isStub ? "stub 128-d" : "ArcFace"}</span>
+      <span id="enr-engine" style="margin-left:auto;font-size:11px;color:#64748b">thr cos ${COSINE_THRESHOLD} · …</span>
     </div>
   `;
 
@@ -163,6 +163,21 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient, o
   const hintEl = el.querySelector("#enr-hint");
   const galleryEl = el.querySelector("#enr-gallery");
   const clearBtn = el.querySelector("#enr-clear");
+  const engineEl = el.querySelector("#enr-engine");
+
+  // Fix 056: el pie se pintaba una sola vez con isStub inicial (siempre
+  // "stub"). Ahora se actualiza cuando el motor termina de inicializar.
+  function renderEngine() {
+    if (!engineEl) return;
+    engineEl.textContent = embedder.isStub
+      ? `thr cos ${COSINE_THRESHOLD} · stub 128-d`
+      : `thr cos ${COSINE_THRESHOLD} · ArcFace`;
+    engineEl.style.color = embedder.isStub ? "#64748b" : "#22c55e";
+  }
+  renderEngine();
+  // precalentar motor en background (no bloquea): así el primer enroll
+  // ya usa ArcFace si el modelo está disponible.
+  embedder.init().then(renderEngine).catch(renderEngine);
   const consentWrap = el.querySelector("#enr-consent");
   const consentCheck = el.querySelector("#enr-consent-check");
 
@@ -546,6 +561,7 @@ export function createEnrollmentPanel({ videoEl, canvasEl, onEnroll, wsClient, o
       }
     } catch {}
     const embedding = await embedder.embed(cropSource || { width: 112, height: 112 }, seed);
+    renderEngine();
     const rec = {
       id: nanoid(),
       nombre,
