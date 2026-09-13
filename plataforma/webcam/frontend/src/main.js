@@ -15,14 +15,16 @@ let overlay = null;
 let webcam = { video: null, cam: null, stream: null, raf: 0, frameId: 0 };
 
 function currentKey() {
-  return new URL(window.location.href).searchParams.get("variant") ?? keys[0];
+  return new URL(window.location.href).searchParams.get("variant") ?? "percepcion";
 }
 
 function mount(key) {
   if (active) active.dispose();
   const container = document.getElementById("app");
   container.innerHTML = "";
-  const spec = variants[key];
+  container.className = "";
+  const spec = variants[key] ?? variants.percepcion;
+  key = variants[key] ? key : "percepcion";
   active = spec.mount(container, sim);
   document.getElementById("variant-label").textContent = `${key.toUpperCase()} — ${spec.name}`;
   // re-attach percepcion panel after mount
@@ -103,6 +105,20 @@ function createPercepcionDOM() {
 
 function attachPercepcionPanel() {
   if (!percepcion) return;
+  // Modo fullscreen: el panel vive dentro de .percepcion-dash y el CSS
+  // .v-percepcion lo estira a toda la pantalla (sin flotantes 300px).
+  const full = document.querySelector(".v-percepcion .percepcion-dash");
+  if (full) {
+    if (percepcion.parentElement !== full) full.appendChild(percepcion);
+    percepcion.style.position = "";
+    percepcion.style.right = "";
+    percepcion.style.top = "";
+    percepcion.style.width = "";
+    percepcion.style.zIndex = "";
+    percepcion.style.maxHeight = "";
+    percepcion.style.overflowY = "";
+    return;
+  }
   // try to place inside controlroom dash if present, else floating
   const dash = document.querySelector(".room-dash");
   if (dash) {
