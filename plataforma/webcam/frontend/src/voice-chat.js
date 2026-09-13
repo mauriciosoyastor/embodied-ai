@@ -89,6 +89,47 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
   let speakStartTs = 0;
   let speakGuard = null;
   let lastBackend = 'unknown'; // ok|sin-percepcion|unreachable|mock
+  // FSM explícita: IDLE→LISTENING→THINKING→SPEAKING→LISTENING. `transition`
+  // valida cada cambio; a `idle` siempre se puede llegar (las vías de stop
+  // jamás deben atascarse). Violaciones se cuentan en telemetría.
+  const FSM_ALLOWED = {
+    idle: ['listening'],
+    listening: ['thinking', 'idle'],
+    thinking: ['speaking', 'listening', 'idle'],
+    speaking: ['listening', 'idle'],
+  };
+  let lastTransition = 'init→idle';
+  let fsmViolations = 0;
+  // Watchdog STT: si está activo+escuchando sin resultados, el recog murió
+  // en silencio (Chrome lo corta por desuso/tras TTS) → reiniciar.
+  let lastResultTs = 0;
+  let watchdogTimer = null;
+  const WATCHDOG_MS = 8000;
+  // Log ingest de fragmentos descartados: texto + confidence + motivo para
+  // calibrar el umbral low-info según ruido ambiente.
+  let droppedLog = [];
+  let lastError = null;
+  let lastInterimConf = null;
+
+  function logDropped(text, confidence, reason) {
+    droppedLog.push({ text: String(text || ''), confidence, reason, ts: Date.now() });
+    if (droppedLog.length > 20) droppedLog = droppedLog.slice(-20);
+  }
+
+  function transition(to, why) {
+    const from = state;
+    if (to === from) {
+      setState(to); // re-render sin contar violación
+      return;
+    }
+    const ok = (FSM_ALLOWED[from] || []).includes(to);
+    if (!ok) {
+      fsmViolations += 1;
+      console.warn(`[voice-chat] FSM inválida ${from}→${to} (${why || '?'})`);
+    }
+    lastTransition = `${from}→${to}${why ? ` (${why})` : ''}`;
+    setState(to);
+  }
 
   function loadVoices() {
     if (!('speechSynthesis' in window)) return;
@@ -130,7 +171,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
   }
 
   function renderDebug() {
-    debugEl.textContent = JSON.stringify({ state, active, muted, backend: lastBackend, supported: SUPPORTED, interim, last: transcripts.slice(-1)[0] || null }, null, 2);
+    debugEl.textContent = JSON.stringify({ state, active, muted, backend: lastBackend, supported: SUPPORTED, interim, last: transcripts.slice(-1)[0] || null, fsm: lastTransition, fsmViolations, lastError, dropped: droppedLog.length, droppedLast: droppedLog.slice(-3) }, null, 2);
   }
 
   function detachRecog(r) {
@@ -154,7 +195,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     if (!active || manualStop) return;
     pausedForReply = false;
     interim = '';
-    setState('listening');
+    transition('listening', 'resume-mic');
     // Si el objeto actual murió con stop(), arrancar uno nuevo
     scheduleRestart(250);
   }
@@ -177,13 +218,13 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     // reabrir el mic de inmediato para no dejar la charla 3s en "speaking".
     if (!String(text || '').trim()) {
       resumeRecogAfterReply();
-      if (!active) setState('idle');
+      if (!active) transition('idle', 'speak-empty');
       return;
     }
     if (!('speechSynthesis' in window) || muted) {
       // Sin TTS igual hay que reabrir el mic para seguir conversando
       resumeRecogAfterReply();
-      if (!active) setState('idle');
+      if (!active) transition('idle', 'speak-muted');
       return;
     }
     speechSynthesis.cancel();
@@ -193,10 +234,10 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     u.lang = v ? v.lang : 'es-AR';
     u.rate = 1;
     u.pitch = 1;
-    u.onstart = () => { speakStartTs = Date.now(); setState('speaking'); };
+    u.onstart = () => { speakStartTs = Date.now(); transition('speaking', 'tts-start'); };
     u.onend = () => { if (speakGuard) clearTimeout(speakGuard); resumeRecogAfterReply(); };
     u.onerror = () => { if (speakGuard) clearTimeout(speakGuard); resumeRecogAfterReply(); };
-    setState('speaking');
+    transition('speaking', 'tts-speak');
     speakStartTs = Date.now();
     // Safety: si el TTS nunca dispara onend (voces sin cargar/bloqueo),
     // reabrir el mic igual para no dejarlo muerto. Estimación ~80ms/char, cap 20s.
@@ -244,19 +285,25 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     const normalized = normalizeTranscriptForWorld(raw);
     // Dedupe anti "recibí recibí": mismo texto <2s se ignora (interim+final)
     const now = Date.now();
-    if (normalized === lastSentText && now - lastSentTs < 2000) return;
+    if (normalized === lastSentText && now - lastSentTs < 2000) {
+      logDropped(normalized, null, 'dedupe');
+      return;
+    }
     if (sendDebounceTimer) clearTimeout(sendDebounceTimer);
     sendDebounceTimer = setTimeout(() => {
       sendDebounceTimer = null;
       // Doble chequeo post-debounce por si interim y final encolaron dos timers
-      if (normalized === lastSentText && Date.now() - lastSentTs < 2000) return;
+      if (normalized === lastSentText && Date.now() - lastSentTs < 2000) {
+        logDropped(normalized, null, 'dedupe-debounced');
+        return;
+      }
       lastSentText = normalized;
       lastSentTs = Date.now();
       pauseRecogForReply();
       transcripts.push({ role: 'user', text: normalized });
       interim = '';
       renderTranscript();
-      setState('thinking');
+      transition('thinking', 'send');
       sendToLLM(normalized).then((reply) => {
         if (typeof reply === 'string' && reply.startsWith('__SIN_CAMARA__')) {
           lastBackend = 'sin-percepcion';
@@ -296,13 +343,17 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
         const t = interim;
         interim = '';
         handleUserText(t);
+      } else if (active && interim) {
+        logDropped(interim, lastInterimConf, 'low-info');
+        interim = '';
+        renderTranscript();
       }
     }, silenceMs);
   }
 
   function startRecog() {
     if (!SUPPORTED) {
-      setState('listening');
+      transition('listening', 'no-stt-fallback');
       interim = '';
       renderTranscript();
       return;
@@ -313,29 +364,33 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     recog = getRec();
     recog.onstart = () => {
       restartFails = 0;
-      setState('listening');
+      transition('listening', 'recog-start');
       renderTranscript();
     };
     recog.onresult = (ev) => {
       if (pausedForReply) return; // mic pausado mientras piensa/habla
+      lastResultTs = Date.now();
       // barge-in: si el bot hablaba y llega voz real (no eco), cortar TTS
       let finalText = '';
       let interimText = '';
+      let bestConf = null;
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const res = ev.results[i];
         const txt = res[0].transcript;
+        if (typeof res[0].confidence === 'number') bestConf = res[0].confidence;
         if (res.isFinal) finalText += txt + ' ';
         else interimText += txt + ' ';
       }
       const candidate = (finalText || interimText).trim();
       if (candidate && isEchoOfBot(candidate)) {
+        logDropped(candidate, bestConf, 'echo');
         interim = '';
         renderTranscript();
         return;
       }
       if (state === 'speaking' && candidate && 'speechSynthesis' in window) {
         try { speechSynthesis.cancel(); } catch {}
-        setState('listening');
+        transition('listening', 'barge-in');
       }
       if (finalText.trim()) {
         interim = '';
@@ -343,12 +398,15 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
         handleUserText(finalText.trim());
       } else if (interimText.trim()) {
         interim = interimText.trim();
+        lastInterimConf = bestConf;
         renderTranscript();
         renderDebug();
         armSilenceFallback();
       }
     };
     recog.onerror = (ev) => {
+      lastError = `${ev.error || 'unknown'}${ev.message ? `: ${ev.message}` : ''} @${new Date().toLocaleTimeString()}`;
+      renderDebug();
       console.warn('[voice-chat] STT error', ev.error, ev.message);
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
         interim = 'Micrófono bloqueado: permití el acceso en la barra del navegador y tocá Iniciar de nuevo.';
@@ -363,7 +421,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
       // continuous se corta por silencio largo o por pauseRecogForReply().stop():
       // solo re-arrancar si está activo, no pausado y no fue stop manual
       if (active && !manualStop && !pausedForReply) scheduleRestart();
-      else if (!active && state !== 'idle') setState('idle');
+      else if (!active && state !== 'idle') transition('idle', 'recog-end');
       renderTranscript();
     };
     try {
@@ -387,6 +445,28 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     }, backoff);
   }
 
+  function armWatchdog() {
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    watchdogTimer = setInterval(() => {
+      // STT muerto en silencio: activo+escuchando, sin pausa por reply y
+      // sin resultados por WATCHDOG_MS → forzar reinicio del recog.
+      if (active && !manualStop && !pausedForReply && state === 'listening'
+        && lastResultTs > 0 && Date.now() - lastResultTs > WATCHDOG_MS) {
+        console.warn('[voice-chat] watchdog: sin resultados STT, reinicio recog');
+        lastResultTs = Date.now();
+        try { if (recog) detachRecog(recog); } catch {}
+        recog = null;
+        startRecog();
+        renderDebug();
+      }
+    }, 2000);
+  }
+
+  function disarmWatchdog() {
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+
   function startConversation() {
     // Debe llamarse en gesto de usuario (click) por autoplay/mic policy
     if (active) return;
@@ -394,12 +474,14 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     manualStop = false;
     pausedForReply = false;
     restartFails = 0;
+    lastResultTs = 0;
     if (restartTimer) clearTimeout(restartTimer);
     if (state === 'speaking' && 'speechSynthesis' in window) {
       try { speechSynthesis.cancel(); } catch {}
     }
-    setState('listening');
+    transition('listening', 'start');
     renderTranscript();
+    armWatchdog();
     startRecog();
   }
 
@@ -407,6 +489,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     active = false;
     manualStop = true;
     pausedForReply = false;
+    disarmWatchdog();
     if (restartTimer) clearTimeout(restartTimer);
     if (silenceTimer) clearTimeout(silenceTimer);
     if (sendDebounceTimer) clearTimeout(sendDebounceTimer);
@@ -417,7 +500,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     recog = null;
     interim = '';
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
-    setState('idle');
+    transition('idle', 'stop');
     renderTranscript();
   }
 
@@ -446,8 +529,8 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
     interim = '';
     if (silenceTimer) clearTimeout(silenceTimer);
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
-    if (active) setState('listening');
-    else setState('idle');
+    if (active) transition('listening', 'clear');
+    else transition('idle', 'clear');
     renderTranscript();
   });
   testBtn.addEventListener('click', () => handleUserText('hola, quiero registrarme'));
@@ -470,7 +553,7 @@ export function createVoiceChat({ onSendToLLM, silenceMs = 900 } = {}) {
   }
 
   renderTranscript();
-  setState('idle');
+  transition('idle', 'init');
 
   return {
     element: wrap,
