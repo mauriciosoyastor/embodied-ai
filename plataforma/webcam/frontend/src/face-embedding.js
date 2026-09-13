@@ -33,6 +33,11 @@ export function cosineSimilarity(a, b) {
   return 1 - cosineDistance(a, b);
 }
 
+// Fix 056: import estático para que Vite lo resuelva y empaquete.
+// El import dinámico vía variable dejaba el bare specifier sin resolver
+// en el navegador y caía siempre a stub aunque el paquete estuviera instalado.
+import * as ortStatic from "onnxruntime-web";
+
 function xorshift32(seed) {
   let x = seed >>> 0;
   return () => {
@@ -79,15 +84,17 @@ export function createFaceEmbedder({ modelUrl } = {}) {
   async function init() {
     if (ready) return;
     try {
-      // stub si no instalado — import vía variable para que Vite no resuelva en build
-      const spec = "onnxruntime-web";
-      const ort = await import(spec).catch(() => null);
-      if (!ort) throw new Error("onnxruntime-web no disponible");
+      // ort estático (fix 056) — Vite lo empaqueta, el navegador lo resuelve.
+      const ort = ortStatic;
+      if (!ort?.InferenceSession) throw new Error("onnxruntime-web no disponible");
       ortRef = ort;
       if (ort.env?.wasm) {
-        // Vite: wasm en public/wasm/
+        // Fix 056: wasm por CDN jsdelivr (igual que tasks-vision).
+        // Los .mjs/.wasm en public/ no pueden importarse desde código
+        // fuente en Vite dev — el CDN evita la restricción.
         try {
-          ort.env.wasm.wasmPaths = "/wasm/";
+          ort.env.wasm.wasmPaths =
+            "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/";
         } catch {}
       }
       // probar fetch del modelo — con fallback HEAD 405 -> GET Range
@@ -142,8 +149,12 @@ export function createFaceEmbedder({ modelUrl } = {}) {
         data[2 * 112 * 112 + i] = (b - 0.5) / 0.5;
       }
       const ort = session._ort || ortRef;
+      // Fix 056: nombre de input dinámico (mobilefacenet usa "input0",
+      // no "input"). Con nombre fijo el run() tiraba y el catch devolvía
+      // stub en silencio con pie verde.
       // @ts-ignore ort types
-      const feeds = { input: new ort.Tensor("float32", data, [1, 3, 112, 112]) };
+      const inName = (session.inputNames && session.inputNames[0]) || "input";
+      const feeds = { [inName]: new ort.Tensor("float32", data, [1, 3, 112, 112]) };
       // session puede tener input name dinámico; fallback a primer key
       const out = await session.run(feeds);
       const key = Object.keys(out)[0];

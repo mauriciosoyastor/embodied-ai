@@ -17,13 +17,13 @@ repos:
     hooks:
       - id: mypy-plataforma
         name: mypy plataforma/webcam
-        entry: uv run mypy plataforma/webcam
+        entry: uv run python -m mypy plataforma/webcam
         language: system
         files: ^plataforma/
         pass_filenames: false
       - id: pytest-plataforma
         name: pytest plataforma/webcam
-        entry: uv run pytest plataforma/webcam -q
+        entry: uv run python -m pytest plataforma/webcam -q
         language: system
         files: ^plataforma/
         pass_filenames: false

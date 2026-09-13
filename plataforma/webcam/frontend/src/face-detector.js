@@ -1,8 +1,10 @@
 /**
  * face-detector.js — Ticket 031 / 033 / 036.
  * BlazeFace short-range via @mediapipe/tasks-vision — fallback isStub.
- * Reusa patrón face-embedding.js: dynamic import + HEAD probe, wasm mismo que hand_landmarker.
+ * Reusa patrón face-embedding.js: HEAD probe, wasm mismo que hand_landmarker.
+ * Fix 056: import estático (el dinámico vía variable no resolvía en navegador).
  */
+import * as mpStatic from "@mediapipe/tasks-vision";
 
 export function createFaceDetector({
   modelUrl = "/models/blaze_face_short_range.tflite",
@@ -28,9 +30,9 @@ export function createFaceDetector({
   async function init() {
     if (ready) return;
     try {
-      const spec = "@mediapipe/tasks-vision";
-      const mp = await import(spec).catch(() => null);
-      if (!mp) throw new Error("mediapipe tasks-vision no disponible");
+      // mp estático (fix 056) — Vite lo empaqueta, el navegador lo resuelve.
+      const mp = mpStatic;
+      if (!mp?.FilesetResolver) throw new Error("mediapipe tasks-vision no disponible");
       // probe modelo HEAD/GET Range como face-embedding.js
       let ok = false;
       try {
